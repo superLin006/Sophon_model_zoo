@@ -1,0 +1,42 @@
+# SDK 和工具包（体积大，不上传）
+0_Toolkits/
+
+# 模型权重
+*.pt
+*.pth
+*.bin
+*.onnx
+*.bmodel
+*.npz
+
+# 测试数据
+test_data/
+datasets/
+audios/
+models/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Conda 环境
+env/
+
+# 日志和临时文件
+*.log
+*.tmp
+*.cache
+output/
+results/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

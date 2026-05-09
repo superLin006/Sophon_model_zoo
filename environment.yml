@@ -1,0 +1,23 @@
+name: sophon-export
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - torch>=2.0.0
+    - torchvision
+    - torchaudio
+    - onnx>=1.14.0
+    - onnxruntime
+    - onnxsim
+    - numpy
+    - scipy
+    - librosa
+    - soundfile
+    - opencv-python
+    - Pillow
+    - tqdm
+    - pyyaml
