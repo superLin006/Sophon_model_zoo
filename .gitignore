@@ -6,6 +6,7 @@
 *.pth
 *.bin
 *.onnx
+*.onnx.data
 *.bmodel
 *.npz
 
