@@ -27,7 +27,7 @@ public:
     WhisperInference();
     ~WhisperInference();
 
-    int  init(const char* model_dir);
+    int  init(const char* model_dir, const char* precision = "F32");
     std::string run(const char* audio_file, const char* language,
                     TokenCallback callback = nullptr);
     void release();

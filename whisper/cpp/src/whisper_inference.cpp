@@ -45,14 +45,15 @@ WhisperInference::~WhisperInference() { release(); }
 // init
 // ============================================================
 
-int WhisperInference::init(const char* model_dir) {
+int WhisperInference::init(const char* model_dir, const char* precision) {
     if (initialized_) return 0;
 
     const char* dbg = std::getenv("WHISPER_DEBUG");
     debug_mode_ = (dbg && std::string(dbg) == "1");
 
-    LOG("Initializing from: " << model_dir);
+    LOG("Initializing from: " << model_dir << "  precision: " << precision);
     std::string base(model_dir);
+    std::string prec(precision);
 
     // BM handle（device 0）
     if (bm_dev_request(&bm_handle_, 0) != BM_SUCCESS) {
@@ -60,8 +61,8 @@ int WhisperInference::init(const char* model_dir) {
     }
 
     // 加载 bmodel
-    if (!load_encoder(base + "/whisper_base_encoder_F32.bmodel")) return -1;
-    if (!load_decoder(base + "/whisper_base_decoder_F32.bmodel")) return -1;
+    if (!load_encoder(base + "/whisper_base_encoder_" + prec + ".bmodel")) return -1;
+    if (!load_decoder(base + "/whisper_base_decoder_" + prec + ".bmodel")) return -1;
 
     // mel filters [80 x 201]
     mel_filters_.resize(N_MELS * MELS_FILTERS_SIZE);

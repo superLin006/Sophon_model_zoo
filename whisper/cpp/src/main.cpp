@@ -5,18 +5,19 @@
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: " << argv[0]
-                  << " <model_dir> <audio.wav> [language=zh|en]" << std::endl;
+                  << " <model_dir> <audio.wav> [language=zh|en] [precision=F32|F16]" << std::endl;
         std::cerr << "  model_dir: directory containing bmodel files, mel filters, vocab" << std::endl;
         return -1;
     }
 
     const char* model_dir = argv[1];
     const char* audio_file = argv[2];
-    const char* language = (argc >= 4) ? argv[3] : "zh";
+    const char* language  = (argc >= 4) ? argv[3] : "zh";
+    const char* precision = (argc >= 5) ? argv[4] : "F32";
 
     WhisperInference whisper;
 
-    if (whisper.init(model_dir) != 0) {
+    if (whisper.init(model_dir, precision) != 0) {
         std::cerr << "[ERROR] Init failed" << std::endl;
         return -1;
     }
