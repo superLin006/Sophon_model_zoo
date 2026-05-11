@@ -1,69 +1,69 @@
 # Sophon Model Zoo
 
-Sophon BM1684 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP4。
+Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP4。
+
+## 支持的模型
+
+| 模型 | 类型 | 精度 | RTF | 状态 |
+|------|------|------|-----|------|
+| [Whisper Base](whisper/) | 语音识别（自回归） | FP32 / FP16 | - | ✅ 完成 |
+| [SenseVoice Small](sensevoice/) | 语音识别 + 情感/事件（CTC） | FP32 / FP16 | 0.034 / 0.0095 | ✅ 完成 |
 
 ## 项目结构
 
 ```
 Sophon_model_zoo/
-├── 0_Toolkits/               # SDK-23.09 LTS SP4（不上传 Git）
-├── 1_third_party/            # 第三方库
-├── 2_utils/                  # 公共工具脚本
-├── docker/                   # Docker 环境配置
-│   ├── run_docker.sh         # 一键启动 TPU-MLIR 容器
-│   └── README.md             # Docker 使用说明
-├── environment.yml           # Conda 环境（用于模型导出）
-└── TUTORIAL.md               # 完整移植教程
+├── 0_Toolkits/               # Sophon SOC SDK（不入库，.gitkeep 占位）
+├── 1_third_party/            # 第三方库静态库（不入库，.gitkeep 占位）
+│   ├── fftw/                 # fftw3 aarch64（whisper 使用）
+│   └── kaldi_native_fbank/   # kaldi-native-fbank aarch64（sensevoice 使用）
+├── 2_utils/                  # 公共工具脚本（预留）
+├── docker/
+│   ├── Dockerfile.cross-build  # Ubuntu 20.04 aarch64 交叉编译镜像
+│   ├── run_docker.sh           # 启动 TPU-MLIR 转换容器
+│   └── README.md
+├── environment.yml           # Conda 环境（模型导出用）
+├── whisper/                  # Whisper Base 移植
+└── sensevoice/               # SenseVoice Small 移植
 ```
 
-## 支持的模型
+## 转换流程
 
-| 模型 | 类型 | 精度 | 状态 |
-|------|------|------|------|
-| (待添加) | - | FP32 | - |
-
-## 技术栈
-
-- **平台**: Sophon BM1684
-- **SDK**: SDK-23.09 LTS SP4
-- **转换工具**: TPU-MLIR (Docker: `sophgo/tpuc_dev:latest`)
-- **支持精度**: FP32（BM1684 主要精度）、INT8（需校准数据）
+```
+PyTorch (.pt)
+    ↓  export_onnx.py  [Conda: sophon-export]
+ONNX (.onnx)
+    ↓  gen_bmodel.sh  [Docker: sophgo/tpuc_dev:latest]
+BModel (.bmodel)
+    ↓  build.sh  [Docker: sophon-cross-build]
+aarch64 可执行文件  →  scp 到 BM1684X 板卡运行
+```
 
 ## 快速开始
 
-### 1. 准备 Conda 环境（用于模型导出）
+### 1. 准备 Conda 环境
 
 ```bash
 conda env create -f environment.yml
 conda activate sophon-export
 ```
 
-### 2. 启动 TPU-MLIR Docker 容器（用于模型转换）
+### 2. 构建交叉编译镜像（只需一次）
 
 ```bash
-# 首次使用先拉取镜像
-docker pull sophgo/tpuc_dev:latest
-
-# 启动容器
-./docker/run_docker.sh
+docker build -t sophon-cross-build docker/
 ```
 
-### 3. 转换流程
+### 3. 移植某个模型
 
-```
-PyTorch → ONNX（Conda 环境）→ bmodel（Docker 容器内）
-```
+参考各模型目录下的 `README.md`：
+- [whisper/README.md](whisper/README.md)
+- [sensevoice/README.md](sensevoice/README.md)
 
-详见 [TUTORIAL.md](TUTORIAL.md)。
+## 技术栈
 
-## 转换链路
-
-```
-PyTorch (.pt)
-    ↓  export_onnx.py  [conda: sophon-export]
-ONNX (.onnx)
-    ↓  model_transform.py  [Docker]
-MLIR (.mlir)
-    ↓  model_deploy.py --chip bm1684 --quantize F32  [Docker]
-BModel (.bmodel)
-```
+- **芯片**: Sophon BM1684X
+- **SDK**: SDK-23.09 LTS SP4
+- **转换工具**: TPU-MLIR v1.28.1（`sophgo/tpuc_dev:latest`）
+- **交叉编译**: Ubuntu 20.04 + gcc 9.4（兼容服务器 glibc 2.31）
+- **支持精度**: FP32 / FP16

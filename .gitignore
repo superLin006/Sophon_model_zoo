@@ -1,6 +1,8 @@
-# SDK、工具包、第三方库（体积大，不上传）
-0_Toolkits/
-1_third_party/
+# SDK、工具包、第三方库（体积大，不上传，用 .gitkeep 保留目录结构）
+0_Toolkits/*
+!0_Toolkits/.gitkeep
+1_third_party/**/*
+!1_third_party/**/.gitkeep
 
 # 模型权重
 *.pt
@@ -11,11 +13,13 @@
 *.bmodel
 *.npz
 
-# 测试数据
-test_data/
+# 测试数据（用 .gitkeep 保留目录结构）
+test_data/*
+!test_data/.gitkeep
 datasets/
 audios/
-models/
+models/*
+!models/**/.gitkeep
 
 # Python
 __pycache__/

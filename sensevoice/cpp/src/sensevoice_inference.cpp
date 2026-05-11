@@ -3,6 +3,10 @@
 #include <cstring>
 #include <iostream>
 #include <algorithm>
+#include <chrono>
+
+using Clock = std::chrono::steady_clock;
+using Ms    = std::chrono::duration<double, std::milli>;
 
 namespace sensevoice {
 
@@ -97,16 +101,20 @@ RecognitionResult SenseVoiceInference::run(const char* audio_file) {
         return empty;
     }
 
+    double audio_duration_ms = samples.size() * 1000.0 / sample_rate;
+
     // Feature extraction: audio → Fbank80 → LFR → [num_frames, 560]
+    auto t0 = Clock::now();
     int32_t num_lfr_frames = 0;
     std::vector<float> lfr = frontend_->Process(samples, &num_lfr_frames);
+    auto t1 = Clock::now();
+
     if (lfr.empty()) {
         std::cerr << "[Error] Feature extraction failed\n";
         return empty;
     }
 
-    std::cout << "[Run] LFR frames: " << num_lfr_frames
-              << " (model expects " << SV_FIXED_FRAMES << ")\n";
+    double feat_ms = Ms(t1 - t0).count();
 
     // Pad/truncate to fixed size
     std::vector<float> input = pad_or_truncate(lfr, num_lfr_frames);
@@ -152,6 +160,7 @@ RecognitionResult SenseVoiceInference::run(const char* audio_file) {
     bm_tensor_t* inputs  = &input_tensor;
     bm_tensor_t* outputs = &output_tensor;
 
+    auto t2 = Clock::now();
     bool ok = bmrt_launch_tensor_ex(runtime_, net_info_->name,
                                     inputs,  1,
                                     outputs, 1,
@@ -163,6 +172,17 @@ RecognitionResult SenseVoiceInference::run(const char* audio_file) {
         return empty;
     }
     bm_thread_sync(bm_handle_);
+    auto t3 = Clock::now();
+
+    double infer_ms = Ms(t3 - t2).count();
+    double total_ms = feat_ms + infer_ms;
+    double rtf = total_ms / audio_duration_ms;
+
+    std::cout << "[Timing] audio=" << audio_duration_ms << "ms"
+              << "  feat=" << feat_ms << "ms"
+              << "  infer=" << infer_ms << "ms"
+              << "  total=" << total_ms << "ms"
+              << "  RTF=" << rtf << "\n";
 
     // Copy output back to host
     std::vector<float> logits(SV_OUTPUT_FRAMES * SV_VOCAB_SIZE);
