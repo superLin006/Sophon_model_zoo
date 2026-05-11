@@ -24,8 +24,8 @@ whisper/
 | 步骤 | 状态 | 说明 |
 |------|------|------|
 | 算子兼容性分析 | ✅ 完成 | Encoder/Decoder 全部兼容，无需修改网络结构 |
-| ONNX 导出 | 🔄 进行中 | |
-| bmodel 转换 | ⏳ 待完成 | |
+| ONNX 导出 | ✅ 完成 | 3 部分：encoder / decoder_main / decoder_loop |
+| bmodel 转换 | ✅ 完成 | BM1684 FP32，tpu_mlir v1.28.1 |
 | C++ 推理 | ⏳ 待完成 | |
 
 ## 算子分析结论
@@ -46,6 +46,12 @@ whisper/
 | n_text_ctx | 448 |
 | n_text_state | 512 |
 | n_text_layer | 6 |
+
+## 关键注意事项
+
+- **GELU**: BM1684 不支持 Erf 算子，导出时将 `F.gelu()` 改为 `F.gelu(approximate='tanh')`，用 Tanh 近似实现
+- **past_len**: decoder_loop 的 positional embedding 位置索引作为 `pos_emb [1,1,512]` 传入（C++ 侧按步切片），避免动态整数索引不被 tpu_mlir 支持
+- **tpu_mlir**: 使用 v1.28.1，安装方式 `pip install /toolkits/tpu_mlir-1.28.1-py3-none-any.whl`
 
 ## 参考
 
