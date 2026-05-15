@@ -34,7 +34,6 @@ cmake .. \
     -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
     -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
     -DSOPHON_SDK=/repo/0_Toolkits/soc-sdk-sp4 \
-    -DONNXRUNTIME_DIR=/repo/1_third_party/onnxruntime-linux-aarch64 \
     -DCMAKE_VERBOSE_MAKEFILE=OFF \
     2>&1
 

@@ -97,10 +97,11 @@ int main(int argc, char* argv[]) {
     std::cout << "Samples    : " << result.n_samples << " ("
               << (double)result.n_samples / vits_tts::SAMPLE_RATE << "s @ "
               << vits_tts::SAMPLE_RATE << "Hz)\n";
-    std::cout << "Part1(ONNX): " << result.part1_ms << " ms\n";
-    std::cout << "Part2(TPU) : " << result.part2_ms << " ms\n";
-    std::cout << "Total      : " << result.total_ms << " ms\n";
-    std::cout << "RTF        : " << result.rtf << "\n";
+    std::cout << "PartA(enc+dp): " << result.part_a_ms << " ms\n";
+    std::cout << "PartB(MAS)   : " << result.part_b_ms << " ms\n";
+    std::cout << "PartC(flow+dec):" << result.part_c_ms << " ms\n";
+    std::cout << "Total        : " << result.total_ms << " ms\n";
+    std::cout << "RTF          : " << result.rtf << "\n";
 
     return 0;
 }

@@ -205,6 +205,124 @@ runtime arch[BM1684X] is not the same with bmodel arch[BM1684]
 
 ---
 
+---
+
+## VITS-MeloTTS BM1684X 移植经验
+
+### 推理链路说明
+
+原始 MeloTTS 包含以下模块，整体是一个含动态 shape 和不支持算子的单图：
+
+```
+text tokens/tones
+    ↓
+[enc_p]  文本编码器（Transformer）
+    ↓ h[1,192,L], dp_w[1,1,L], x_mask[1,1,L]
+[DP]     Deterministic Duration Predictor
+    ↓ dp_w（对数时长）
+[MAS]    Monotonic Alignment Search（CPU，~8ms）
+    ↓ z_p[1,192,T_mel]，y_mask[1,1,T_mel]
+[Flow]   Normalizing Flow（逆变换，8 层）
+    ↓
+[Decoder] HiFi-GAN 声码器（上采样 512x）
+    ↓
+audio[1,1,T_audio]  @ 44100 Hz
+```
+
+**最终三段式拆分方案（全TPU，仅 MAS 在 CPU）：**
+
+```
+Part A（TPU）: enc_p + DP
+    输入：x[1,128 int32], x_lengths[1 int32], tones[1,128 int32]
+    输出：dp_w[1,1,128 f32], h[1,192,128 f32], x_mask[1,1,128 f32]
+    文件：vits_part_a_F32.bmodel / vits_part_a_F16.bmodel
+
+Part B（CPU，~8ms）: MAS
+    dur[i] = ceil(exp(dp_w[i]) * x_mask[i])
+    T_mel  = sum(dur)
+    attn[T_mel, L] = 对角块矩阵
+    z_p[Z_DIM, T_mel] = h[:, :L] @ attn.T   ← 注意 h 的步长是 L_MAX=128
+
+Part C（TPU）: Flow（逆）+ Decoder
+    输入：z_p[1,192,256 f32]（pad到T_MEL_FIXED=256），y_mask[1,1,256 f32]
+    输出：audio[1,1,131072 f32]（截取前 T_mel*UPSAMPLE 个有效采样）
+    文件：vits_part_c_F32.bmodel / vits_part_c_F16.bmodel
+```
+
+**性能（BM1684X，F32）：**
+- Part A: ~6ms，Part B: ~8ms，Part C: ~305ms
+- 总计 ~320ms，RTF ≈ 0.12（生成 2.7s 音频只需 320ms）
+- 相比原始 CPU onnxruntime 方案（~6.8s），加速约 **20×**
+
+---
+
+### VITS-MeloTTS 移植遇到的问题与解决方案
+
+#### 问题 1：SDP（随机时长预测器）含不支持算子 NonZero × 21
+
+**触发**：`model_transform.py` 编译整图时报错，因为 SDP 内有大量 NonZero 算子（TPU 不支持）。
+
+**解决**：在 `make_tpu_model.py` 中将 SDP 的输入替换为全零常量，只保留 DP（确定性时长预测器），彻底去掉 SDP 分支：
+```python
+# 将 /Add_1（SDP 输出）替换为零常量
+zero = np.zeros(..., dtype=np.float32)
+node = onnx.helper.make_node("Constant", [], ["/Add_1_output_0"], value=...)
+```
+
+#### 问题 2：Flow 模块含 RandomNormalLike（TPU 不支持）
+
+**触发**：`model_transform.py` 报 `UNREACHABLE at Range.cpp` 或算子不支持。
+
+**解决**：noise_scale=0 时该分支的贡献为零，直接将 `/Add_2_output_0` 替换为 `/Transpose_3_output_0`（即绕过随机噪声分支），并将 noise_scale 常量化为 0：
+```python
+# 绕过噪声分支，直接用 z_p 作为 Flow 输入
+```
+
+#### 问题 3：Range 算子导致整图无法编译到 TPU
+
+**触发**：MAS 内部用 `torch.arange` 生成索引，shape 依赖运行时的 T_mel，TPU 无法静态编译。
+
+**解决**：不要把 MAS 放到 TPU。将模型拆成三段：enc_p+DP（Part A）、MAS（CPU）、Flow+Decoder（Part C）。Part C 用固定 T_mel=256 编译 bmodel。
+
+#### 问题 4：Part C bmodel 编译时 T_mel 必须静态化
+
+**触发**：`part_c_flow_decoder.onnx` 的 T_mel 维度是动态 `unk__3`，`model_deploy.py` 需要静态 shape。
+
+**解决**：在 `make_split_models.py` 中提取子图后用 onnxsim 固化 shape（`--overwrite-input-shape`），将 T_mel 强制设为 256，再编译 bmodel。推理时 z_p pad 到 256 列，输出截取前 T_mel * UPSAMPLE 个有效采样。
+
+#### 问题 5：BMRuntime 无 BM_INT64 类型
+
+**触发**：交叉编译报 `'BM_INT64' was not declared in this scope`。
+
+**原因**：BM1684X SDK（bmdef.h）只有 BM_INT8/INT16/INT32/INT4，没有 INT64。TPU-MLIR 编译 ONNX 的 int64 输入时自动降为 int32。
+
+**解决**：在 C++ 中将 int64 输入 cast 到 int32 再上传 device，dtype 设 BM_INT32：
+```cpp
+std::vector<int32_t> buf(n);
+for (int i = 0; i < n; ++i) buf[i] = (int32_t)data[i];
+t.dtype = BM_INT32;
+```
+
+#### 问题 6：matmul_ht 步长错误导致音频全部为噪声
+
+**触发**：Part A bmodel 输出 h 存储为 `[Z_DIM=192, L_MAX=128]` 的连续缓冲区（步长 128），但 `matmul_ht` 传入 `L=seq_len`（如 61），导致跨行地址偏移错误，每个 channel 读到错误数据，z_p 值域严重偏小，输出全噪声。
+
+**定位**：加调试打印后发现 `z_p[0..4]` 全是同一个值（第 0 个 phoneme 的 h 值），证明 matmul 按错误步长寻址。
+
+**解决**：给 `matmul_ht` 增加 `h_stride` 参数，传入 `L_MAX` 而非 `seq_len`：
+```cpp
+// 错误
+matmul_ht(h.data(), attn_vec.data(), Z_DIM, seq_len, T_mel, z_p.data());
+
+// 正确
+matmul_ht(h.data(), L_MAX,           // ← h 的行步长是 L_MAX，不是 seq_len
+          attn_vec.data(), Z_DIM, seq_len, T_mel, z_p.data());
+```
+
+**教训**：bmodel 输出缓冲区大小由编译时的固定 shape 决定（此处 L_MAX=128），而非运行时的实际序列长度。在 CPU 端操作 bmodel 输出的多维数组时，**步长必须使用 bmodel 的固定维度，而非实际输入长度**。
+
+---
+
 ## 相关资源
 
 - SDK: SDK-23.09 LTS SP4

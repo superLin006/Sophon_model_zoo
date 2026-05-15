@@ -3,29 +3,25 @@
 #include <vector>
 #include <cstdint>
 
-// onnxruntime C API
-#include "onnxruntime_c_api.h"
-// bmruntime
 #include "bmruntime_interface.h"
 #include "bmlib_runtime.h"
 
 namespace vits_tts {
 
-// Fixed model constants
-static const int  L_MAX         = 128;    // max padded sequence length
-static const int  T_MEL_FIXED   = 256;    // bmodel fixed T_mel dimension
-static const int  Z_DIM         = 192;    // z_hat channels
-static const int  G_DIM         = 256;    // g_emb channels
-static const int  UPSAMPLE      = 512;    // samples per mel frame
-static const int  SAMPLE_RATE   = 44100;
+static const int  L_MAX        = 128;   // max padded sequence length
+static const int  T_MEL_FIXED  = 256;   // bmodel fixed T_mel dimension (~3s @ 44100Hz)
+static const int  Z_DIM        = 192;   // z_p channels
+static const int  UPSAMPLE     = 512;   // samples per mel frame
+static const int  SAMPLE_RATE  = 44100;
 
 struct TTSResult {
-    std::vector<float> audio;   // valid audio samples
+    std::vector<float> audio;
     int    n_samples;
-    double part1_ms;            // onnx inference time
-    double part2_ms;            // bmodel inference time
+    double part_a_ms;   // TPU: enc_p + dp
+    double part_b_ms;   // CPU: MAS
+    double part_c_ms;   // TPU: flow + decoder
     double total_ms;
-    double rtf;                 // real-time factor = total_ms / audio_duration_ms
+    double rtf;
 };
 
 class TTSInference {
@@ -33,29 +29,27 @@ public:
     TTSInference();
     ~TTSInference();
 
-    // model_dir: directory containing model_part1.onnx and bmodel file
+    // model_dir: directory with vits_part_a_*.bmodel and vits_part_c_*.bmodel
     // precision: "F32" or "F16"
     int init(const char* model_dir, const char* precision);
     void release();
 
-    // tokens/tones: raw int64 arrays (with blank, no padding needed here)
-    // seq_len: actual sequence length (without padding)
+    // tokens/tones: raw int64 arrays (with blank, no padding)
+    // seq_len: actual sequence length
     TTSResult run(const int64_t* tokens, const int64_t* tones, int seq_len);
 
 private:
     bool initialized_ = false;
 
-    // onnxruntime
-    const OrtApi*    ort_api_    = nullptr;
-    OrtEnv*          ort_env_    = nullptr;
-    OrtSession*      ort_session_= nullptr;
-    OrtSessionOptions* ort_opts_ = nullptr;
-    OrtMemoryInfo*   ort_mem_    = nullptr;
+    bm_handle_t bm_handle_ = nullptr;
 
-    // bmruntime
-    bm_handle_t      bm_handle_  = nullptr;
-    void*            runtime_    = nullptr;
-    const bm_net_info_t* net_info_ = nullptr;
+    // Part A: enc_p + dp
+    void* runtime_a_         = nullptr;
+    const bm_net_info_t* net_a_ = nullptr;
+
+    // Part C: flow + decoder
+    void* runtime_c_         = nullptr;
+    const bm_net_info_t* net_c_ = nullptr;
 };
 
 }  // namespace vits_tts
