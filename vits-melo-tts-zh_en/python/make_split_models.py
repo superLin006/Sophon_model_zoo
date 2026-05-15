@@ -9,7 +9,7 @@ make_split_models.py  -- 三段式拆分，最大化 TPU 利用率
       → dp_w[1,1,L], h[1,192,L], attn_mask[1,1,1,L], x_mask[1,1,L]
       注: g_emb(speaker embedding) 已被 constant-fold 进 Part C 权重
 
-  Part B (CPU, ~39 nodes, <5ms):
+  Part B (CPU, ~39 nodes, <10ms):
       dp_w + h + attn_mask + x_mask
       → T_mel 计算 (15节点: Exp/Mul/Ceil/ReduceSum/Clip/Cast/ReduceMax)
       → MAS 对齐 (24节点: Range/Less/Reshape/Pad/Slice/Sub/Mul/MatMul/Transpose)
@@ -20,6 +20,11 @@ make_split_models.py  -- 三段式拆分，最大化 TPU 利用率
       → Flow (归一化流逆向, ~1695 nodes)
       → HiFi-GAN Decoder (~245 nodes)
       → audio[1,1,T_fixed*512]
+
+  注意: T_MEL_FIXED=256 (~3s) 是 BM1684X TPU DDR 4GB 的硬上限。
+        更大的 T_MEL 会导致运行时 TPU DDR 溢出，板卡崩溃。
+        根因：HiFi-GAN Decoder 上采样链中间激活随 T_MEL 线性增长，
+        T>256 时 BMRuntime 无法通过地址复用将峰值压到 4GB 以内。
 
 用法: python python/make_split_models.py
       (从项目根目录运行)
@@ -41,11 +46,11 @@ OUT_C    = os.path.join(PROJ, 'models/onnx/vits-melo-tts-zh_en/part_c_flow_decod
 L_FIXED     = 128
 T_MEL_FIXED = 256   # ~3s 上限（256 * 512 / 44100 ≈ 2.97s）
 
+
 def main():
     print(f'Loading {TPU_ONNX}')
     m = onnx.load(TPU_ONNX)
 
-    # shape inference 以填充 value_info
     m_si = shape_inference.infer_shapes(m, check_type=False, strict_mode=False)
     tmp_si = TPU_ONNX.replace('.onnx', '_si.onnx')
     onnx.save(m_si, tmp_si)
@@ -62,7 +67,6 @@ def main():
         input_names=['x', 'x_lengths', 'tones'],
         output_names=part_a_outputs)
 
-    # verify
     sess_a = ort.InferenceSession(OUT_A)
     x  = np.zeros((1, L_FIXED), dtype=np.int64); x[0, :10] = 1
     xl = np.array([10], dtype=np.int64)
@@ -78,8 +82,6 @@ def main():
 
     # ── Part C ──────────────────────────────────────
     print(f'\n=== Part C (Flow + Decoder, T_mel_fixed={T_MEL_FIXED}) ===')
-    # Flow 输入: z_p = /Transpose_3_output_0, y_mask = /Cast_4_output_0
-    # g_emb 已 constant-fold 进权重
     extract_model(tmp_si, OUT_C,
         input_names=['/Transpose_3_output_0', '/Cast_4_output_0'],
         output_names=['y'])
@@ -93,7 +95,6 @@ def main():
         mc = mc_sim
     onnx.save(mc, OUT_C)
 
-    # verify
     sess_c = ort.InferenceSession(OUT_C)
     zp   = np.random.randn(1, 192, T_MEL_FIXED).astype(np.float32)
     mask = np.ones((1, 1, T_MEL_FIXED), dtype=np.float32)
@@ -112,13 +113,6 @@ def main():
         print('✅ 两个子模型无问题算子，可以编译 bmodel')
         print(f'\n  Part A: {OUT_A}')
         print(f'  Part C: {OUT_C}')
-        print(f'\n编译命令 (在 Docker 内 /tmp/compile 目录):')
-        print(f'  model_transform.py --model_name vits_part_a \\')
-        print(f"    --model_def {OUT_A} --input_shapes '[[1,{L_FIXED}],[1],[1,{L_FIXED}]]' \\")
-        print(f'    --mlir vits_part_a.mlir')
-        print(f'  model_deploy.py --mlir vits_part_a.mlir --quantize F32 --chip bm1684x \\')
-        print(f'    --disable_layer_group --model vits_part_a_F32.bmodel')
-        print(f'  (同理 Part C: input_shapes [[1,192,{T_MEL_FIXED}],[1,1,{T_MEL_FIXED}]])')
     else:
         print(f'⚠️  仍有问题算子: A={bad_a}, C={bad_c}')
 

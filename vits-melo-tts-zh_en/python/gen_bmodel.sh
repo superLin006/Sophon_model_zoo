@@ -4,10 +4,13 @@
 # 在 TPU-MLIR Docker 内从仓库根目录执行：
 #   docker run --rm \
 #     -v $(pwd):/repo \
-#     sophgo/tpuc_dev:v3.2 \
+#     -v $(pwd)/0_Toolkits:/repo/0_Toolkits \
+#     sophgo/tpuc_dev:latest \
 #     bash /repo/vits-melo-tts-zh_en/python/gen_bmodel.sh [F32|F16]
 #
 # 前提：已运行 make_tpu_model.py 和 make_split_models.py 生成子图 ONNX
+#
+# 注意: T_MEL_FIXED=256 是 BM1684X 的硬上限，更大值会导致 TPU DDR 溢出崩溃
 
 set -e
 
@@ -36,7 +39,7 @@ pip install "$WHL" -q --no-deps 2>/dev/null || pip install "$WHL" -q
 mkdir -p "${BMODEL_DIR}" "${WORK_DIR}"
 
 echo "================================================================"
-echo "  VITS-MeloTTS BM1684X bmodel 编译  [${QUANTIZE}]"
+echo "  VITS-MeloTTS BM1684X bmodel 编译  [${QUANTIZE}]  T_MEL=${T_MEL_FIXED}"
 echo "================================================================"
 
 # ── Part A: enc_p + DP ──────────────────────────────────────────────
@@ -73,8 +76,6 @@ model_deploy.py \
     --mlir vits_part_c.mlir \
     --quantize ${QUANTIZE} \
     --chip ${CHIP} \
-    --disable_layer_group \
-    --addr_mode io_alone \
     --model "${BMODEL_DIR}/vits_part_c_${QUANTIZE}.bmodel"
 
 echo "[Part C] 完成：$(ls -lh ${BMODEL_DIR}/vits_part_c_${QUANTIZE}.bmodel | awk '{print $5, $9}')"
