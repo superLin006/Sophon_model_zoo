@@ -1,0 +1,8 @@
+audio_samples/
+models/
+deploy_package/
+scripts/
+*.wav
+*.log
+__pycache__/
+*.pyc
