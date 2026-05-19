@@ -4,6 +4,7 @@
 #include <cstring>
 #include <limits>
 #include <cmath>
+#include <algorithm>
 
 struct VocosEngine::Impl {
     bm_handle_t handle   = nullptr;
@@ -79,14 +80,26 @@ VocosOutput VocosEngine::infer(const std::vector<float>& mel, int n_mels, int T)
 
     VocosOutput result;
     if (ok) {
-        result.T   = use_T;
-        int sz     = n_bins * max_T;
-        result.mag.resize(sz);
-        result.x.resize(sz);
-        result.y.resize(sz);
-        bm_memcpy_d2s(impl_->handle, result.mag.data(), out_tensors[0].device_mem);
-        bm_memcpy_d2s(impl_->handle, result.x.data(),   out_tensors[1].device_mem);
-        bm_memcpy_d2s(impl_->handle, result.y.data(),   out_tensors[2].device_mem);
+        result.T = use_T;
+        // Download full bmodel output [n_bins, max_T], then slice to [n_bins, use_T]
+        std::vector<float> tmp(n_bins * max_T);
+        bm_memcpy_d2s(impl_->handle, tmp.data(), out_tensors[0].device_mem);
+        result.mag.resize(n_bins * use_T);
+        for (int b = 0; b < n_bins; ++b)
+            std::copy(tmp.begin() + b * max_T, tmp.begin() + b * max_T + use_T,
+                      result.mag.begin() + b * use_T);
+
+        bm_memcpy_d2s(impl_->handle, tmp.data(), out_tensors[1].device_mem);
+        result.x.resize(n_bins * use_T);
+        for (int b = 0; b < n_bins; ++b)
+            std::copy(tmp.begin() + b * max_T, tmp.begin() + b * max_T + use_T,
+                      result.x.begin() + b * use_T);
+
+        bm_memcpy_d2s(impl_->handle, tmp.data(), out_tensors[2].device_mem);
+        result.y.resize(n_bins * use_T);
+        for (int b = 0; b < n_bins; ++b)
+            std::copy(tmp.begin() + b * max_T, tmp.begin() + b * max_T + use_T,
+                      result.y.begin() + b * use_T);
     }
 
     bm_free_device(impl_->handle, in_tensor.device_mem);

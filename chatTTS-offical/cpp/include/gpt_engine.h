@@ -24,15 +24,18 @@ struct GPTResult {
     std::vector<std::vector<int>>      codes;
 };
 
+// Output of a single prefill or decode step
+struct GPTStepResult {
+    std::vector<float>    logits;   // [num_audio_tokens * num_vq] f32
+    std::vector<uint16_t> hidden;   // [hidden_size] f16
+};
+
 class GPTEngine {
 public:
     GPTEngine(const std::string& bmodel_path, int tpu_id, const GPTConfig& cfg);
     ~GPTEngine();
 
-    // Generate audio codes from input_ids (text prompt token sequence)
-    // spk_emb: float16 speaker embedding [hidden_size], or empty to skip
-    // temperature: per-vq temperature (length == num_vq)
-    // Returns token sequences + hidden states for decoder
+    // ── Batch API (non-streaming) ────────────────────────────────────────────
     GPTResult generate(const std::vector<int>&       input_ids,
                        const std::vector<uint16_t>&  spk_emb,
                        int                           spk_emb_idx,
@@ -42,6 +45,25 @@ public:
                        float                         repetition_penalty,
                        int                           max_new_token = 2048,
                        int                           min_new_token = 0);
+
+    // ── Step-by-step API (streaming) ─────────────────────────────────────────
+    // Call prefill_step() once, then decode_step() in a loop.
+
+    // Run prefill: embed + 20 blocks. Returns logits + last-token hidden.
+    // Resets internal decode state (decode_step counter, text_tok_len).
+    GPTStepResult prefill_step(const std::vector<int>&      input_ids,
+                               const std::vector<uint16_t>& spk_emb,
+                               int                          spk_emb_idx);
+
+    // Run one decode step for the given vq_codes.
+    // Returns logits + hidden for this step.
+    GPTStepResult decode_step(const std::vector<int>& vq_codes);
+
+    // Number of decode steps executed since last prefill_step()
+    int current_decode_step() const;
+
+    // Max sequence length the bmodel was compiled with
+    int seqlen() const;
 
 private:
     struct Impl;

@@ -521,6 +521,35 @@ GPTEngine::Impl::decode(const std::vector<int>& vq_codes) {
     return {logits, hidden_host};
 }
 
+// ── Shared sampling state helper (used by both batch and step-by-step API) ───
+
+struct SamplingState {
+    int NT, NV, eos;
+    float top_p;
+    int   top_k;
+    float repetition_penalty;
+    int   min_new_token;
+    std::vector<float> temperature;
+    std::vector<std::vector<int>> generated;
+    std::vector<int> curr_codes;
+    std::mt19937* rng;
+
+    bool sample(const std::vector<float>& raw, int step) {
+        bool any_eos = false;
+        for (int v = 0; v < NV; ++v) {
+            std::vector<float> lv(NT);
+            for (int k = 0; k < NT; ++k) lv[k] = raw[(size_t)k * NV + v];
+            apply_repetition_penalty(lv, generated[v], repetition_penalty);
+            if (step < min_new_token) lv[eos] = -1e9f;
+            int tok = sample_top_k_top_p(lv, temperature[v], top_p, top_k, *rng);
+            curr_codes[v] = tok;
+            if (tok == eos) any_eos = true;
+            else generated[v].push_back(tok);
+        }
+        return any_eos;
+    }
+};
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 GPTEngine::GPTEngine(const std::string& bmodel_path, int tpu_id, const GPTConfig& cfg)
@@ -543,48 +572,54 @@ GPTResult GPTEngine::generate(const std::vector<int>&      input_ids,
     im.rng.seed(42);
 
     GPTResult result;
-    int NT = im.cfg.num_audio_tokens;
-    int NV = im.cfg.num_vq;
-    int eos = NT - 1;
-
-    std::vector<std::vector<int>> generated(NV);
-    std::vector<int> curr_codes(NV);
-    bool done = false;
-
-    auto sample_step = [&](const std::vector<float>& raw, int step) -> bool {
-        bool any_eos = false;
-        for (int v = 0; v < NV; ++v) {
-            std::vector<float> lv(NT);
-            for (int k = 0; k < NT; ++k) lv[k] = raw[(size_t)k * NV + v];
-            apply_repetition_penalty(lv, generated[v], repetition_penalty);
-            if (step < min_new_token) lv[eos] = -1e9f;
-            int tok = sample_top_k_top_p(lv, temperature[v], top_p, top_k, im.rng);
-            curr_codes[v] = tok;
-            if (tok == eos) any_eos = true;
-            else generated[v].push_back(tok);
-        }
-        return any_eos;
-    };
+    SamplingState ss;
+    ss.NT = im.cfg.num_audio_tokens; ss.NV = im.cfg.num_vq; ss.eos = ss.NT - 1;
+    ss.top_p = top_p; ss.top_k = top_k; ss.repetition_penalty = repetition_penalty;
+    ss.min_new_token = min_new_token; ss.temperature = temperature;
+    ss.generated.resize(ss.NV); ss.curr_codes.resize(ss.NV); ss.rng = &im.rng;
 
     // Prefill
     auto [logits0, hidden0] = im.prefill(input_ids, spk_emb_idx, spk_emb);
-    done = sample_step(logits0, 0);
+    bool done = ss.sample(logits0, 0);
     result.hiddens.push_back(hidden0);
-    result.codes.push_back(curr_codes);
+    result.codes.push_back(ss.curr_codes);
     fprintf(stderr, "[GPT] step=0 codes=[%d,%d,%d,%d] eos=%d\n",
-            curr_codes[0], curr_codes[1], curr_codes[2], curr_codes[3], done?1:0);
+            ss.curr_codes[0], ss.curr_codes[1], ss.curr_codes[2], ss.curr_codes[3], done?1:0);
 
     // Decode loop
     for (int step = 1; step < max_new_token && !done; ++step) {
         if (im.decode_step >= im.SEQLEN) break;
-        auto [logits_n, hidden_n] = im.decode(curr_codes);
-        done = sample_step(logits_n, step);
+        auto [logits_n, hidden_n] = im.decode(ss.curr_codes);
+        done = ss.sample(logits_n, step);
         result.hiddens.push_back(hidden_n);
-        result.codes.push_back(curr_codes);
+        result.codes.push_back(ss.curr_codes);
         if (step <= 5 || step % 20 == 0)
             fprintf(stderr, "[GPT] step=%d codes=[%d,%d,%d,%d] eos=%d\n",
-                    step, curr_codes[0], curr_codes[1], curr_codes[2], curr_codes[3], done?1:0);
+                    step, ss.curr_codes[0], ss.curr_codes[1], ss.curr_codes[2], ss.curr_codes[3], done?1:0);
     }
     fprintf(stderr, "[GPT] done: %d steps\n", (int)result.codes.size());
     return result;
+}
+
+// ── Step-by-step API ─────────────────────────────────────────────────────────
+
+GPTStepResult GPTEngine::prefill_step(const std::vector<int>&      input_ids,
+                                       const std::vector<uint16_t>& spk_emb,
+                                       int                          spk_emb_idx) {
+    impl_->rng.seed(42);
+    auto [logits, hidden] = impl_->prefill(input_ids, spk_emb_idx, spk_emb);
+    return {std::move(logits), std::move(hidden)};
+}
+
+GPTStepResult GPTEngine::decode_step(const std::vector<int>& vq_codes) {
+    auto [logits, hidden] = impl_->decode(vq_codes);
+    return {std::move(logits), std::move(hidden)};
+}
+
+int GPTEngine::current_decode_step() const {
+    return impl_->decode_step;
+}
+
+int GPTEngine::seqlen() const {
+    return impl_->SEQLEN;
 }

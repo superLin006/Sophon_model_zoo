@@ -3,6 +3,7 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <functional>
 
 struct ChatTTSConfig {
     // Model paths
@@ -27,6 +28,14 @@ struct InferParams {
     int   speed              = 5;  // [speed_N] tag, 1-9
 };
 
+struct StreamParams {
+    // Number of GPT decode steps to accumulate before calling decoder+vocos+iSTFT.
+    // Larger = lower overhead, higher first-chunk latency. Python default: 24.
+    int stream_batch       = 24;
+    // Skip the first N chunks (decoder output can be noisy at the very start).
+    int pass_first_n_batches = 2;
+};
+
 class ChatTTS {
 public:
     explicit ChatTTS(const ChatTTSConfig& cfg);
@@ -39,11 +48,20 @@ public:
     // Set speaker embedding directly from float32 array (will be converted to f16)
     void set_speaker(const std::vector<float>& spk_emb_f32);
 
-    // Run full TTS pipeline: text → PCM float32
-    // do_normalize: apply homophones replacement
+    // Run full TTS pipeline: text → PCM float32 (non-streaming)
     std::vector<float> infer(const std::string& text,
                              const InferParams& params = InferParams(),
                              bool do_normalize = true);
+
+    // Streaming TTS: callback is invoked with each PCM chunk as it becomes ready.
+    // chunk_callback(pcm_chunk) is called synchronously from the inference thread.
+    // Returns total number of PCM samples generated.
+    // do_normalize: apply homophones replacement
+    int infer_stream(const std::string& text,
+                     const InferParams&  params,
+                     const StreamParams& sparams,
+                     std::function<void(const std::vector<float>&)> chunk_callback,
+                     bool do_normalize = true);
 
     // Write PCM to WAV file (16-bit, mono)
     static bool save_wav(const std::string& path,

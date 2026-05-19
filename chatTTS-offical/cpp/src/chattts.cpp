@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <random>
 
 // ── Half-float helper ────────────────────────────────────────────────────────
 
@@ -170,6 +171,161 @@ std::vector<float> ChatTTS::infer(const std::string& text,
     audio.resize(keep);
 
     return audio;
+}
+
+// ── infer_stream ─────────────────────────────────────────────────────────────
+
+int ChatTTS::infer_stream(const std::string& text,
+                           const InferParams&  params,
+                           const StreamParams& sparams,
+                           std::function<void(const std::vector<float>&)> chunk_callback,
+                           bool do_normalize) {
+    auto& im = *impl_;
+
+    // 1. Normalize + tokenize (same as infer())
+    std::string norm_text = do_normalize ? im.normalizer->normalize(text) : text;
+    std::string decorated = im.decorate(norm_text, params.speed);
+    std::vector<int> input_ids = im.tokenizer->encode(decorated);
+    if (input_ids.empty())
+        throw std::runtime_error("ChatTTS::infer_stream: tokenization produced empty ids");
+
+    int spk_idx = -1;
+    for (int i = 0; i < (int)input_ids.size(); ++i)
+        if (input_ids[i] == im.spk_emb_token_id) { spk_idx = i; break; }
+
+    fprintf(stderr, "[TTS-stream] tokens=%d spk_idx=%d stream_batch=%d\n",
+            (int)input_ids.size(), spk_idx, sparams.stream_batch);
+
+    // 2. Sampling state
+    const int NT  = im.gpt->seqlen() > 0 ? 626 : 626;  // num_audio_tokens
+    const int NV  = 4;
+    const int EOS = NT - 1;
+    std::vector<float> temps(NV, params.temperature);
+    std::vector<std::vector<int>> generated(NV);
+    std::vector<int> curr_codes(NV, 0);
+
+    std::mt19937 rng(42);
+    auto sample = [&](const std::vector<float>& raw, int step) -> bool {
+        bool any_eos = false;
+        for (int v = 0; v < NV; ++v) {
+            std::vector<float> lv(NT);
+            for (int k = 0; k < NT; ++k) lv[k] = raw[(size_t)k * NV + v];
+            // repetition penalty
+            for (int tok : generated[v]) {
+                if (tok < 0 || tok >= NT) continue;
+                lv[tok] = lv[tok] > 0 ? lv[tok] / params.repetition_penalty
+                                       : lv[tok] * params.repetition_penalty;
+            }
+            if (step < params.min_new_token) lv[EOS] = -1e9f;
+            // top-k + top-p sampling
+            std::vector<std::pair<float,int>> scored(NT);
+            for (int i = 0; i < NT; ++i) scored[i] = {lv[i] / temps[v], i};
+            int tk = (params.top_k > 0 && params.top_k < NT) ? params.top_k : NT;
+            std::partial_sort(scored.begin(), scored.begin()+tk, scored.end(),
+                              [](auto& a, auto& b){ return a.first > b.first; });
+            scored.resize(tk);
+            float mx = scored[0].first, sum = 0;
+            for (auto& p : scored) { p.first = std::exp(p.first-mx); sum += p.first; }
+            for (auto& p : scored) p.first /= sum;
+            float cum = 0; int keep = tk;
+            for (int i = 0; i < tk; ++i) {
+                cum += scored[i].first;
+                if (cum >= params.top_p) { keep = i+1; break; }
+            }
+            scored.resize(keep);
+            sum = 0; for (auto& p : scored) sum += p.first;
+            std::vector<float> probs(keep);
+            for (int i = 0; i < keep; ++i) probs[i] = scored[i].first / sum;
+            std::discrete_distribution<int> dist(probs.begin(), probs.end());
+            int tok = scored[dist(rng)].second;
+            curr_codes[v] = tok;
+            if (tok == EOS) any_eos = true;
+            else generated[v].push_back(tok);
+        }
+        return any_eos;
+    };
+
+    // Helper: decode a batch of hiddens → PCM chunk
+    // decoder bmodel has fixed shape [1, 768, max_T], only first T cols are valid.
+    // We extract the valid T*2 mel columns before passing to vocos.
+    const int hidden_size = 768;
+    const int n_mels      = 100;
+    auto decode_batch = [&](const std::vector<std::vector<uint16_t>>& batch_hiddens)
+                            -> std::vector<float> {
+        int T = (int)batch_hiddens.size();
+        std::vector<uint16_t> flat(T * hidden_size);
+        for (int t = 0; t < T; ++t)
+            std::copy(batch_hiddens[t].begin(), batch_hiddens[t].end(),
+                      flat.begin() + t * hidden_size);
+
+        // decoder output: mel [n_mels, max_T*2] — only first T*2 cols valid
+        std::vector<float> mel_full = im.decoder->infer(flat, hidden_size, T);
+        if (mel_full.empty()) return {};
+
+        int mel_T_valid = T * 2;
+        int mel_T_full  = im.decoder->input_T() * 2;
+
+        // Compact mel to [n_mels, mel_T_valid] by slicing each row
+        std::vector<float> mel(n_mels * mel_T_valid);
+        for (int m = 0; m < n_mels; ++m)
+            std::copy(mel_full.begin() + m * mel_T_full,
+                      mel_full.begin() + m * mel_T_full + mel_T_valid,
+                      mel.begin() + m * mel_T_valid);
+
+        VocosOutput voc = im.vocos->infer(mel, n_mels, mel_T_valid);
+        if (voc.mag.empty()) return {};
+        return im.istft->forward(voc.mag, voc.x, voc.y, voc.T);
+    };
+
+    // 3. Prefill
+    GPTStepResult first = im.gpt->prefill_step(input_ids, im.spk_emb, spk_idx);
+    bool done = sample(first.logits, 0);
+
+    std::vector<std::vector<uint16_t>> batch;
+    batch.push_back(first.hidden);
+
+    int total_pcm  = 0;
+    int chunk_idx  = 0;   // counts how many chunks have been sent to callback
+
+    // 4. Decode loop — flush every stream_batch steps
+    for (int step = 1; step < params.max_new_token && !done; ++step) {
+        if (im.gpt->current_decode_step() >= im.gpt->seqlen()) break;
+
+        GPTStepResult sr = im.gpt->decode_step(curr_codes);
+        done = sample(sr.logits, step);
+        batch.push_back(sr.hidden);
+
+        if ((int)batch.size() >= sparams.stream_batch || done) {
+            // Always decode the batch (we need running state in decoder)
+            std::vector<float> chunk = decode_batch(batch);
+            batch.clear();
+
+            chunk_idx++;
+            if (chunk_idx > sparams.pass_first_n_batches && !chunk.empty()) {
+                total_pcm += (int)chunk.size();
+                chunk_callback(chunk);
+            }
+        }
+    }
+
+    // 5. Flush remaining hiddens
+    if (!batch.empty()) {
+        std::vector<float> chunk = decode_batch(batch);
+        batch.clear();
+        if (!chunk.empty()) {
+            // Trim trailing silence
+            int keep = 0;
+            for (int i = (int)chunk.size()-1; i >= 0; --i)
+                if (std::abs(chunk[i]) > 1e-5f) { keep = i+1; break; }
+            chunk.resize(keep);
+            if (!chunk.empty()) {
+                total_pcm += (int)chunk.size();
+                chunk_callback(chunk);
+            }
+        }
+    }
+
+    return total_pcm;
 }
 
 // ── WAV write ────────────────────────────────────────────────────────────────
