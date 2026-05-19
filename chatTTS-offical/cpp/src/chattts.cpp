@@ -6,6 +6,9 @@
 #include "vocos_engine.h"
 #include "istft.h"
 
+#include <bmlib_runtime.h>
+#include <bmruntime_interface.h>
+
 #include <fstream>
 #include <stdexcept>
 #include <cmath>
@@ -30,6 +33,9 @@ static uint16_t f32_to_f16(float v) {
 
 struct ChatTTS::Impl {
     ChatTTSConfig cfg;
+
+    // Shared bm_handle_t — all engines use same physical allocator to prevent fragmentation
+    bm_handle_t shared_hdl = nullptr;
 
     std::unique_ptr<Normalizer>     normalizer;
     std::unique_ptr<BertTokenizer>  tokenizer;
@@ -61,12 +67,23 @@ ChatTTS::ChatTTS(const ChatTTSConfig& cfg) : impl_(std::make_unique<Impl>()) {
     impl_->tokenizer  = std::make_unique<BertTokenizer>(cfg.vocab_path);
     fprintf(stderr, "[ChatTTS] tokenizer OK\n");
 
-    GPTConfig gpt_cfg;  // defaults match ChatTTS architecture
-    impl_->gpt     = std::make_unique<GPTEngine>(cfg.gpt_model_path, cfg.tpu_id, gpt_cfg);
+    // Create one shared bm_handle_t so all engines use the same physical memory allocator.
+    // This prevents heap fragmentation from independent per-engine allocators.
+    // Each engine creates its own bmrt (required for separate bmodel loading) but
+    // all device memory goes through the same handle's allocator pool.
+    if (bm_dev_request(&impl_->shared_hdl, cfg.tpu_id) != BM_SUCCESS)
+        throw std::runtime_error("ChatTTS: bm_dev_request failed");
+    fprintf(stderr, "[ChatTTS] shared handle created\n");
+
+    GPTConfig gpt_cfg;
+    impl_->gpt     = std::make_unique<GPTEngine>(cfg.gpt_model_path,
+                                                  impl_->shared_hdl, nullptr, gpt_cfg);
     fprintf(stderr, "[ChatTTS] GPT OK\n");
-    impl_->decoder = std::make_unique<DecoderEngine>(cfg.decoder_model_path, cfg.tpu_id);
+    impl_->decoder = std::make_unique<DecoderEngine>(cfg.decoder_model_path,
+                                                      impl_->shared_hdl, nullptr);
     fprintf(stderr, "[ChatTTS] decoder OK\n");
-    impl_->vocos   = std::make_unique<VocosEngine>(cfg.vocos_model_path, cfg.tpu_id);
+    impl_->vocos   = std::make_unique<VocosEngine>(cfg.vocos_model_path,
+                                                    impl_->shared_hdl, nullptr);
     fprintf(stderr, "[ChatTTS] vocos OK\n");
     impl_->istft   = std::make_unique<ISTFT>(1024, 256, 1024);
     fprintf(stderr, "[ChatTTS] ISTFT OK\n");
@@ -75,7 +92,14 @@ ChatTTS::ChatTTS(const ChatTTSConfig& cfg) : impl_(std::make_unique<Impl>()) {
     fprintf(stderr, "[ChatTTS] ctor done, spk_emb_token_id=%d\n", impl_->spk_emb_token_id);
 }
 
-ChatTTS::~ChatTTS() = default;
+ChatTTS::~ChatTTS() {
+    // Destroy engines first (frees their persistent device buffers and own bmrt)
+    impl_->gpt.reset();
+    impl_->decoder.reset();
+    impl_->vocos.reset();
+    // Then free the shared handle (engines don't own it, only the handle is shared)
+    if (impl_->shared_hdl) bm_dev_free(impl_->shared_hdl);
+}
 
 // ── Speaker loading ──────────────────────────────────────────────────────────
 

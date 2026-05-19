@@ -122,8 +122,9 @@ static int sample_top_k_top_p(const std::vector<float>& logits,
 struct GPTEngine::Impl {
     GPTConfig cfg;
 
-    bm_handle_t hdl = nullptr;
-    void*       rt  = nullptr;
+    bm_handle_t hdl      = nullptr;
+    void*       rt       = nullptr;
+    bool        owns_hdl = true;
 
     // Network info pointers — valid for lifetime of rt
     const bm_net_info_t* net_embed_text  = nullptr;
@@ -153,6 +154,20 @@ struct GPTEngine::Impl {
     bm_device_mem_t dec_nv_dm   = {};  // [1,1,ATTEN_HEAD,ATTEN_DIM] f16 (new_v scratch)
     bool dec_bufs_ready = false;
 
+    // Pre-allocated prefill buffers — reused every prefill() call
+    bm_device_mem_t pf_em_in_dm  = {};  // [1, SEQLEN] int32 (embedding_text input)
+    bm_device_mem_t pf_em_out_dm = {};  // [1, SEQLEN, HIDDEN_SIZE] f16 (ping)
+    bm_device_mem_t pf_hid_dm    = {};  // [1, SEQLEN, HIDDEN_SIZE] f16 (pong)
+    bm_device_mem_t pf_pid_dm    = {};  // [1, SEQLEN] int32 (block position ids)
+    bm_device_mem_t pf_mask_dm   = {};  // [1, 1, SEQLEN, SEQLEN] f16 (block attn mask)
+    bm_device_mem_t pf_lm_in_dm  = {};  // [1, HIDDEN_SIZE] f16 (lm_head input)
+    bm_device_mem_t pf_lm_out_dm = {};  // [1, NUM_AUDIO_TOKENS, NUM_VQ] f32
+    // dec path: embed_code output + lm_head buffers (tiny but still fragment)
+    bm_device_mem_t dec_ec_out_dm = {};  // [1, 1, HIDDEN_SIZE] f16
+    bm_device_mem_t dec_lm_in_dm  = {};  // [1, HIDDEN_SIZE] f16
+    bm_device_mem_t dec_lm_out_dm = {};  // [1, NUM_AUDIO_TOKENS, NUM_VQ] f32
+    bool pf_bufs_ready = false;
+
     int  decode_step  = 0;
     int  text_tok_len = 0;
     std::mt19937 rng{42};
@@ -176,8 +191,21 @@ struct GPTEngine::Impl {
             bm_free_device(hdl, dec_nk_dm);
             bm_free_device(hdl, dec_nv_dm);
         }
-        if (rt)  bmrt_destroy(rt);
-        if (hdl) bm_dev_free(hdl);
+        if (pf_bufs_ready) {
+            bm_free_device(hdl, pf_em_in_dm);
+            bm_free_device(hdl, pf_em_out_dm);
+            bm_free_device(hdl, pf_hid_dm);
+            bm_free_device(hdl, pf_pid_dm);
+            bm_free_device(hdl, pf_mask_dm);
+            bm_free_device(hdl, pf_lm_in_dm);
+            bm_free_device(hdl, pf_lm_out_dm);
+            bm_free_device(hdl, dec_ec_out_dm);
+            bm_free_device(hdl, dec_lm_in_dm);
+            bm_free_device(hdl, dec_lm_out_dm);
+        }
+        // Always destroy bmrt (created by this engine in both owned and shared handle cases)
+        if (rt) bmrt_destroy(rt);
+        if (owns_hdl && hdl) bm_dev_free(hdl);
     }
 };
 
@@ -189,12 +217,16 @@ void GPTEngine::Impl::init(const std::string& bmodel_path, int tpu_id,
     NUM_LAYERS = c.num_layers;
     NUM_VQ     = c.num_vq;
 
-    if (bm_dev_request(&hdl, tpu_id) != BM_SUCCESS)
-        throw std::runtime_error("bm_dev_request failed");
-    fprintf(stderr, "[GPT] bm_dev_request ok\n");
-
-    rt = bmrt_create(hdl);
-    if (!rt) throw std::runtime_error("bmrt_create failed");
+    if (owns_hdl) {
+        if (bm_dev_request(&hdl, tpu_id) != BM_SUCCESS)
+            throw std::runtime_error("bm_dev_request failed");
+        fprintf(stderr, "[GPT] bm_dev_request ok\n");
+        rt = bmrt_create(hdl);
+        if (!rt) throw std::runtime_error("bmrt_create failed");
+    } else {
+        fprintf(stderr, "[GPT] using shared handle\n");
+        // rt already set by shared-handle constructor
+    }
 
     if (!bmrt_load_bmodel(rt, bmodel_path.c_str()))
         throw std::runtime_error("bmrt_load_bmodel failed: " + bmodel_path);
@@ -267,6 +299,22 @@ void GPTEngine::Impl::init(const std::string& bmodel_path, int tpu_id,
         (void)bc0;
     }
 
+    // Pre-allocate prefill persistent buffers
+    {
+        int NA = cfg.num_audio_tokens, NV = cfg.num_vq;
+        bm_malloc_device_byte(hdl, &pf_em_in_dm,  (size_t)SEQLEN * sizeof(int32_t));
+        bm_malloc_device_byte(hdl, &pf_em_out_dm, (size_t)SEQLEN * HIDDEN_SIZE * sizeof(uint16_t));
+        bm_malloc_device_byte(hdl, &pf_hid_dm,    (size_t)SEQLEN * HIDDEN_SIZE * sizeof(uint16_t));
+        bm_malloc_device_byte(hdl, &pf_pid_dm,    (size_t)SEQLEN * sizeof(int32_t));
+        bm_malloc_device_byte(hdl, &pf_mask_dm,   (size_t)SEQLEN * SEQLEN * sizeof(uint16_t));
+        bm_malloc_device_byte(hdl, &pf_lm_in_dm,  (size_t)HIDDEN_SIZE * sizeof(uint16_t));
+        bm_malloc_device_byte(hdl, &pf_lm_out_dm, (size_t)NA * NV * sizeof(float));
+        bm_malloc_device_byte(hdl, &dec_ec_out_dm, (size_t)HIDDEN_SIZE * sizeof(uint16_t));
+        bm_malloc_device_byte(hdl, &dec_lm_in_dm,  (size_t)HIDDEN_SIZE * sizeof(uint16_t));
+        bm_malloc_device_byte(hdl, &dec_lm_out_dm, (size_t)NA * NV * sizeof(float));
+        pf_bufs_ready = true;
+    }
+
     fprintf(stderr, "[GPT] init done\n");
 }
 
@@ -282,12 +330,15 @@ GPTEngine::Impl::prefill(const std::vector<int>& tokens, int spk_idx,
     // in[0]: [1, SEQLEN] int32 — pad with 0
     std::vector<int32_t> ids(SEQLEN, 0);
     for (int i = 0; i < tok_len; ++i) ids[i] = tokens[i];
+    bm_memcpy_s2d(hdl, pf_em_in_dm, ids.data());
 
     std::vector<bm_tensor_t> em_in(1), em_out(1);
-    em_in[0]  = make_in (rt, hdl, net_embed_text, 0, ids.data());
-    em_out[0] = make_out(rt, hdl, net_embed_text, 0);
+    bmrt_tensor_with_device(&em_in[0],  pf_em_in_dm,  net_embed_text->input_dtypes[0],
+                             net_embed_text->stages[0].input_shapes[0]);
+    bmrt_tensor_with_device(&em_out[0], pf_em_out_dm, net_embed_text->output_dtypes[0],
+                             net_embed_text->stages[0].output_shapes[0]);
     bm_launch(hdl, rt, net_embed_text, em_in, em_out);
-    bm_free_device(hdl, em_in[0].device_mem);
+    // no free — both are persistent
     fprintf(stderr, "[GPT] embedding_text done\n");
 
     // em_out[0] holds hidden: [1, SEQLEN, HIDDEN_SIZE] f16 on device
@@ -299,102 +350,91 @@ GPTEngine::Impl::prefill(const std::vector<int>& tokens, int spk_idx,
     if (spk_idx >= 0 && !spk_emb_f16.empty()) {
         size_t hidden_elems = (size_t)SEQLEN * HIDDEN_SIZE;
         std::vector<uint16_t> hidden_host(hidden_elems);
-        bm_memcpy_d2s(hdl, hidden_host.data(), em_out[0].device_mem);
-        // Copy speaker embedding into position spk_idx
+        bm_memcpy_d2s(hdl, hidden_host.data(), pf_em_out_dm);
         size_t off = (size_t)spk_idx * HIDDEN_SIZE;
         std::memcpy(hidden_host.data() + off, spk_emb_f16.data(),
                     HIDDEN_SIZE * sizeof(uint16_t));
-        bm_memcpy_s2d(hdl, em_out[0].device_mem, hidden_host.data());
+        bm_memcpy_s2d(hdl, pf_em_out_dm, hidden_host.data());
         fprintf(stderr, "[GPT] speaker embedding injected at pos %d\n", spk_idx);
     }
 
     // ── build position_id and attention_mask ──────────────────────────────────
-    // position_ids: [1, SEQLEN] int32: [0,1,2,...,tok_len-1, 0,0,...]
     std::vector<int32_t> pid(SEQLEN, 0);
     for (int i = 0; i < tok_len; ++i) pid[i] = i;
+    bm_memcpy_s2d(hdl, pf_pid_dm, pid.data());
 
-    // attention_mask: [1,1,SEQLEN,SEQLEN] f16
-    // causal: mask[r][c] = 0 if c<=r && r<tok_len, else -10000
     const uint16_t NEG_INF_F16 = 0xF9C0; // f16(-10000)
     size_t mask_elems = (size_t)SEQLEN * SEQLEN;
     std::vector<uint16_t> mask(mask_elems, NEG_INF_F16);
     for (int r = 0; r < tok_len; ++r)
         for (int c = 0; c <= r; ++c)
             mask[(size_t)r * SEQLEN + c] = 0;
+    bm_memcpy_s2d(hdl, pf_mask_dm, mask.data());
 
     // ── 20 transformer blocks ─────────────────────────────────────────────────
-    // in[0]: hidden [1,SEQLEN,HIDDEN_SIZE] f16  — device buffer from previous step
-    // in[1]: pid    [1,SEQLEN] int32
-    // in[2]: mask   [1,1,SEQLEN,SEQLEN] f16
-    // out[0]: hidden [1,SEQLEN,HIDDEN_SIZE] f16
-    // out[1]: past_k [1,SEQLEN,ATTEN_HEAD,ATTEN_DIM] f16
-    // out[2]: past_v [1,SEQLEN,ATTEN_HEAD,ATTEN_DIM] f16
-    // Shared zeroed-padding buffer reused across blocks to clear padded positions
-    // Reusable zero buffer for padding clear (only host-side)
+    // Ping-pong between pf_em_out_dm and pf_hid_dm so we never alloc/free per block.
+    // K/V outputs go directly into persistent dev_k[i]/dev_v[i].
     size_t pad_elems = (tok_len < SEQLEN) ? (size_t)(SEQLEN - tok_len) * HIDDEN_SIZE : 0;
+
+    // ping = pf_em_out_dm (embedding output), pong = pf_hid_dm
+    bm_device_mem_t pf_ping = pf_em_out_dm;
+    bm_device_mem_t pf_pong = pf_hid_dm;
 
     for (int i = 0; i < NUM_LAYERS; ++i) {
         const bm_net_info_t* net = net_blocks[i];
 
-        // out[1]/out[2]: point directly at dev_k[i]/dev_v[i] — no alloc, no free later
+        bm_device_mem_t cur_in  = (i % 2 == 0) ? pf_ping : pf_pong;
+        bm_device_mem_t cur_out = (i % 2 == 0) ? pf_pong : pf_ping;
+
         std::vector<bm_tensor_t> blk_in(3), blk_out(3);
-        blk_in[0] = em_out[0];
-        blk_in[1] = make_in(rt, hdl, net, 1, pid.data());
-        blk_in[2] = make_in(rt, hdl, net, 2, mask.data());
-        blk_out[0] = make_out(rt, hdl, net, 0);
-        // Route K/V outputs directly into persistent device buffers
-        bmrt_tensor_with_device(&blk_out[1], dev_k[i],
-                                net->output_dtypes[1],
-                                net->stages[0].output_shapes[1]);
-        bmrt_tensor_with_device(&blk_out[2], dev_v[i],
-                                net->output_dtypes[2],
-                                net->stages[0].output_shapes[2]);
+        bmrt_tensor_with_device(&blk_in[0], cur_in,    net->input_dtypes[0],  net->stages[0].input_shapes[0]);
+        bmrt_tensor_with_device(&blk_in[1], pf_pid_dm, net->input_dtypes[1],  net->stages[0].input_shapes[1]);
+        bmrt_tensor_with_device(&blk_in[2], pf_mask_dm,net->input_dtypes[2],  net->stages[0].input_shapes[2]);
+        bmrt_tensor_with_device(&blk_out[0],cur_out,   net->output_dtypes[0], net->stages[0].output_shapes[0]);
+        bmrt_tensor_with_device(&blk_out[1], dev_k[i], net->output_dtypes[1], net->stages[0].output_shapes[1]);
+        bmrt_tensor_with_device(&blk_out[2], dev_v[i], net->output_dtypes[2], net->stages[0].output_shapes[2]);
 
         bm_launch(hdl, rt, net, blk_in, blk_out);
+        // all tensors point at persistent buffers — no alloc/free
 
-        bm_free_device(hdl, blk_in[1].device_mem);
-        bm_free_device(hdl, blk_in[2].device_mem);
-        // dev_k[i]/dev_v[i] are persistent — do NOT free blk_out[1/2]
-
-        bm_free_device(hdl, blk_in[0].device_mem);
-        em_out[0] = blk_out[0];
-
-        // Zero out padded rows in hidden to prevent NaN propagation through layer norm.
-        // Padded query rows (>= tok_len) produce all-masked attention → NaN hidden.
+        // Zero out padded rows in hidden output to prevent NaN propagation through layer norm.
         if (i < NUM_LAYERS - 1 && pad_elems > 0) {
             size_t total = (size_t)SEQLEN * HIDDEN_SIZE;
             std::vector<uint16_t> h(total);
-            bm_memcpy_d2s(hdl, h.data(), em_out[0].device_mem);
+            bm_memcpy_d2s(hdl, h.data(), cur_out);
             std::fill(h.data() + (size_t)tok_len * HIDDEN_SIZE, h.data() + total, uint16_t(0));
-            bm_memcpy_s2d(hdl, em_out[0].device_mem, h.data());
+            bm_memcpy_s2d(hdl, cur_out, h.data());
         }
     }
+    // Final hidden is in the buffer that received the last block output.
+    // Last block i=NUM_LAYERS-1: cur_out = ((NUM_LAYERS-1)%2==0) ? pf_pong : pf_ping
+    bm_device_mem_t pf_final_hid = ((NUM_LAYERS - 1) % 2 == 0) ? pf_pong : pf_ping;
     fprintf(stderr, "[GPT] prefill blocks done\n");
 
     // ── lm_head_code ─────────────────────────────────────────────────────────
     // Download final hidden [SEQLEN,HIDDEN_SIZE], extract last real token row
     size_t hidden_total = (size_t)SEQLEN * HIDDEN_SIZE;
     std::vector<uint16_t> hidden_host(hidden_total);
-    bm_memcpy_d2s(hdl, hidden_host.data(), em_out[0].device_mem);
-    bm_free_device(hdl, em_out[0].device_mem);
+    bm_memcpy_d2s(hdl, hidden_host.data(), pf_final_hid);
 
     int last_off = (tok_len - 1) * HIDDEN_SIZE;
     std::vector<uint16_t> last_hidden(HIDDEN_SIZE);
     std::memcpy(last_hidden.data(), hidden_host.data() + last_off,
                 HIDDEN_SIZE * sizeof(uint16_t));
 
-    // lm_head_code: in [1,HIDDEN_SIZE] f16, out [1,626,4] f32
+    // lm_head_code: in [1,HIDDEN_SIZE] f16, out [1,NUM_AUDIO_TOKENS,NUM_VQ] f32
+    bm_memcpy_s2d(hdl, pf_lm_in_dm, last_hidden.data());
     std::vector<bm_tensor_t> lm_in(1), lm_out(1);
-    lm_in[0]  = make_in (rt, hdl, net_lm_code, 0, last_hidden.data());
-    lm_out[0] = make_out(rt, hdl, net_lm_code, 0);
+    bmrt_tensor_with_device(&lm_in[0],  pf_lm_in_dm,  net_lm_code->input_dtypes[0],
+                             net_lm_code->stages[0].input_shapes[0]);
+    bmrt_tensor_with_device(&lm_out[0], pf_lm_out_dm, net_lm_code->output_dtypes[0],
+                             net_lm_code->stages[0].output_shapes[0]);
     bm_launch(hdl, rt, net_lm_code, lm_in, lm_out);
-    bm_free_device(hdl, lm_in[0].device_mem);
+    // no free — persistent buffers
 
-    // Download logits [1, NUM_AUDIO_TOKENS, NUM_VQ] f32
     int logit_n = cfg.num_audio_tokens * cfg.num_vq;
     std::vector<float> logits(logit_n);
-    bm_memcpy_d2s(hdl, logits.data(), lm_out[0].device_mem);
-    bm_free_device(hdl, lm_out[0].device_mem);
+    bm_memcpy_d2s(hdl, logits.data(), pf_lm_out_dm);
 
     decode_step  = 0;
     text_tok_len = tok_len;
@@ -413,11 +453,15 @@ GPTEngine::Impl::decode(const std::vector<int>& vq_codes) {
     std::vector<int32_t> ids(NUM_VQ);
     for (int i = 0; i < NUM_VQ; ++i) ids[i] = vq_codes[i];
 
+    // Reuse pf_em_in_dm (same dtype int32, big enough: SEQLEN ints vs NUM_VQ ints)
+    bm_memcpy_s2d(hdl, pf_em_in_dm, ids.data());
     std::vector<bm_tensor_t> em_in(1), em_out(1);
-    em_in[0]  = make_in (rt, hdl, net_embed_code, 0, ids.data());
-    em_out[0] = make_out(rt, hdl, net_embed_code, 0);
+    bmrt_tensor_with_device(&em_in[0],  pf_em_in_dm,  net_embed_code->input_dtypes[0],
+                             net_embed_code->stages[0].input_shapes[0]);
+    bmrt_tensor_with_device(&em_out[0], dec_ec_out_dm, net_embed_code->output_dtypes[0],
+                             net_embed_code->stages[0].output_shapes[0]);
     bm_launch(hdl, rt, net_embed_code, em_in, em_out);
-    bm_free_device(hdl, em_in[0].device_mem);
+    // no free — persistent buffers
 
     // ── position_id and attention_mask ────────────────────────────────────────
     // Position in the sequence = text_tok_len + step (decode tokens follow text tokens)
@@ -453,8 +497,8 @@ GPTEngine::Impl::decode(const std::vector<int>& vq_codes) {
     // we need a second persistent buffer for blocks 1..N to avoid in-place aliasing.
     // Use em_out[0].device_mem as the "A" buffer and dec_hid_dm as "B", ping-ponging.
 
-    bm_device_mem_t ping = em_out[0].device_mem;  // embedding output — freed at end
-    bm_device_mem_t pong = dec_hid_dm;             // persistent pre-allocated
+    bm_device_mem_t ping = dec_ec_out_dm;  // embedding_code output — persistent
+    bm_device_mem_t pong = dec_hid_dm;    // persistent pre-allocated
 
     int step_elems = ATTEN_HEAD * ATTEN_DIM;
     std::vector<uint16_t> new_k(step_elems), new_v(step_elems);
@@ -501,22 +545,21 @@ GPTEngine::Impl::decode(const std::vector<int>& vq_codes) {
 
     std::vector<uint16_t> hidden_host(HIDDEN_SIZE);
     bm_memcpy_d2s(hdl, hidden_host.data(), final_hid);
-
-    // Free embedding output (ping = em_out[0].device_mem) AFTER downloading final hidden
-    bm_free_device(hdl, em_out[0].device_mem);
-    // dec_hid_dm (pong) is persistent — never freed in decode
+    // both ping (dec_ec_out_dm) and pong (dec_hid_dm) are persistent — no free
 
     // ── lm_head_code ─────────────────────────────────────────────────────────
+    bm_memcpy_s2d(hdl, dec_lm_in_dm, hidden_host.data());
     std::vector<bm_tensor_t> lm_in(1), lm_out(1);
-    lm_in[0]  = make_in (rt, hdl, net_lm_code, 0, hidden_host.data());
-    lm_out[0] = make_out(rt, hdl, net_lm_code, 0);
+    bmrt_tensor_with_device(&lm_in[0],  dec_lm_in_dm,  net_lm_code->input_dtypes[0],
+                             net_lm_code->stages[0].input_shapes[0]);
+    bmrt_tensor_with_device(&lm_out[0], dec_lm_out_dm, net_lm_code->output_dtypes[0],
+                             net_lm_code->stages[0].output_shapes[0]);
     bm_launch(hdl, rt, net_lm_code, lm_in, lm_out);
-    bm_free_device(hdl, lm_in[0].device_mem);
+    // no free — persistent buffers
 
     int logit_n = cfg.num_audio_tokens * cfg.num_vq;
     std::vector<float> logits(logit_n);
-    bm_memcpy_d2s(hdl, logits.data(), lm_out[0].device_mem);
-    bm_free_device(hdl, lm_out[0].device_mem);
+    bm_memcpy_d2s(hdl, logits.data(), dec_lm_out_dm);
 
     return {logits, hidden_host};
 }
@@ -554,7 +597,19 @@ struct SamplingState {
 
 GPTEngine::GPTEngine(const std::string& bmodel_path, int tpu_id, const GPTConfig& cfg)
     : impl_(std::make_unique<Impl>()) {
+    impl_->owns_hdl = true;
     impl_->init(bmodel_path, tpu_id, cfg);
+}
+
+GPTEngine::GPTEngine(const std::string& bmodel_path, void* bm_handle, void* /*ignored*/,
+                     const GPTConfig& cfg)
+    : impl_(std::make_unique<Impl>()) {
+    impl_->owns_hdl = false;
+    impl_->hdl      = static_cast<bm_handle_t>(bm_handle);
+    // Create own bmrt using the shared handle (shared allocator, separate network namespace)
+    impl_->rt = bmrt_create(impl_->hdl);
+    if (!impl_->rt) throw std::runtime_error("GPTEngine: bmrt_create failed");
+    impl_->init(bmodel_path, -1, cfg);  // tpu_id ignored when owns_hdl=false
 }
 
 GPTEngine::~GPTEngine() = default;

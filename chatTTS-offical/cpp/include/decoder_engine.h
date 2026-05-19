@@ -10,6 +10,8 @@
 class DecoderEngine {
 public:
     DecoderEngine(const std::string& bmodel_path, int tpu_id);
+    // Shared-handle ctor: loads bmodel into an existing bmrt (does not own handle/bmrt)
+    DecoderEngine(const std::string& bmodel_path, void* bm_handle, void* bmrt);
     ~DecoderEngine();
 
     // hiddens_f16: flattened [hidden_size * T] float16 values (row-major: T vectors of hidden_size)

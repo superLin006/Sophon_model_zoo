@@ -16,6 +16,8 @@ struct VocosOutput {
 class VocosEngine {
 public:
     VocosEngine(const std::string& bmodel_path, int tpu_id);
+    // Shared-handle ctor: loads bmodel into an existing bmrt (does not own handle/bmrt)
+    VocosEngine(const std::string& bmodel_path, void* bm_handle, void* bmrt);
     ~VocosEngine();
 
     VocosOutput infer(const std::vector<float>& mel, int n_mels, int T);

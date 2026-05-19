@@ -33,6 +33,8 @@ struct GPTStepResult {
 class GPTEngine {
 public:
     GPTEngine(const std::string& bmodel_path, int tpu_id, const GPTConfig& cfg);
+    // Shared-handle ctor: loads bmodel into an existing bmrt (does not own handle/bmrt)
+    GPTEngine(const std::string& bmodel_path, void* bm_handle, void* bmrt, const GPTConfig& cfg);
     ~GPTEngine();
 
     // ── Batch API (non-streaming) ────────────────────────────────────────────
