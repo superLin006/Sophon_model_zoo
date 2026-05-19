@@ -317,24 +317,83 @@ for (size_t i = 0; i < spk_emb_f32.size(); ++i)
 - `dec_nk_dm` / `dec_nv_dm`：new_k/v scratch（各 1536 字节）
 - `dev_k[i]` / `dev_v[i]`：KV cache 常驻 device，prefill 直接用 `bmrt_tensor_with_device` 写入
 
-**结果**：
+#### 问题 7：连续流式推理时 BMRT 堆碎片化导致 OOM（约第 58 次崩溃）
 
-| 文本类型 | 优化前 RTF | 优化后 RTF |
-|----------|:----------:|:----------:|
-| 短文本（~14 tokens） | 1.36 | 0.75 |
-| 长文本（~39 tokens） | 0.66 | 0.54 |
-| 70样本整体 | — | 0.533 |
+**现象**：流式推理约在第 58~60 次请求时崩溃，报 `bm_alloc_gmem failed`，此后所有推理失败，需重启板卡。
 
-### 最终性能（对比 Python 参考）
+**根因**：BMRT slab 分配器不合并已释放块（无 coalesce）。每次 prefill 时：
+- `mask [1,1,1024,1024] f16 = 2MB` × 20 个 block 逐次 alloc/free
+- `hidden [1,1024,768] f16 = 1.5MB` × 20 个 block 逐次 alloc/free
+- Decoder/Vocos 输出 tensor 每次推理 alloc/free
+
+经过约 60 次请求后，device memory 碎片化严重，无法找到足够的连续内存块。
+
+**修复**：双管齐下
+
+**1. 预分配持久设备缓冲区（关键）**：所有引擎在 `init()` 时一次性分配好固定尺寸的 in/out tensor buffer，推理时通过 `bmrt_tensor_with_device` 路由到预分配内存，永不释放。
+
+GPT prefill 使用 ping-pong 缓冲区避免 block 链上的 alloc/free：
+```cpp
+// Impl 中新增（预分配，一次性）
+bm_device_mem_t pf_em_out_dm;   // [1, SEQLEN, HIDDEN] f16，ping
+bm_device_mem_t pf_hid_dm;      // [1, SEQLEN, HIDDEN] f16，pong
+bm_device_mem_t pf_mask_dm;     // [1, 1, SEQLEN, SEQLEN] f16
+bm_device_mem_t pf_lm_in_dm;    // [1, HIDDEN] f16
+bm_device_mem_t pf_lm_out_dm;   // [1, NUM_AUDIO_TOKENS, NUM_VQ] f32
+
+// prefill block 链，交替使用 ping/pong
+bm_device_mem_t* in_hid  = &pf_em_out_dm;
+bm_device_mem_t* out_hid = &pf_hid_dm;
+for (int i = 0; i < NUM_LAYERS; ++i) {
+    // ... 用 in_hid → out_hid
+    std::swap(in_hid, out_hid);
+}
+```
+
+**2. 共享 `bm_handle_t`**：ChatTTS 创建一个 handle，三个引擎（GPT/Decoder/Vocos）共用，各自创建独立 bmrt（一个 bmrt 不能加载多个独立 bmodel，否则 SIGSEGV）：
+```cpp
+// chattts.cpp
+bm_dev_request(&impl_->shared_hdl, cfg.tpu_id);
+impl_->gpt     = std::make_unique<GPTEngine>(path, impl_->shared_hdl, nullptr, gpt_cfg);
+impl_->decoder = std::make_unique<DecoderEngine>(path, impl_->shared_hdl, nullptr);
+impl_->vocos   = std::make_unique<VocosEngine>(path,   impl_->shared_hdl, nullptr);
+
+// 析构顺序：先销毁引擎，再释放 handle
+impl_->gpt.reset();
+impl_->decoder.reset();
+impl_->vocos.reset();
+bm_dev_free(impl_->shared_hdl);
+```
+
+共享 handle 使所有引擎的 `bm_malloc_device_byte`（包括 BMRT 内部的 neuron workspace）走同一物理分配器池，某引擎释放的块可立即被其他引擎复用，从根本上消除跨引擎碎片化。
+
+**关键细节**：必须使用 `bmrt_launch_tensor_ex(..., user_mem=true)` 而非 `bmrt_launch_tensor_ex(..., user_mem=false)` 或 `bmrt_launch_tensor`。非 `_ex` 版本和 `user_mem=false` 会忽略 `bmrt_tensor_with_device` 设置的设备内存，内部重新分配输出 tensor。
+
+**验证**：70/70 样本全部通过（含 192 token 的长文本 prefill），原来第 59 条崩溃的样本正常完成。
+
+### 最终性能
+
+**非流式**（一次性推理，RTF 不含首包延迟）：
 
 | 分组 | Python RTF | C++ RTF |
 |------|:----------:|:-------:|
-| 中文短句（25条） | ~0.75 | 0.606 |
-| 中文长文（10条） | ~0.50 | 0.497 |
-| 英文短句（25条） | ~0.75 | 0.623 |
-| 英文长文（10条） | ~0.50 | 0.497 |
-| **整体** | **~0.65** | **0.533** |
+| 中文短句（25条） | ~0.75 | 0.592 |
+| 中文长文（10条） | ~0.50 | 0.492 |
+| 英文短句（25条） | ~0.75 | 0.610 |
+| 英文长文（10条） | ~0.50 | 0.493 |
+| **整体** | **~0.65** | **0.525** |
 | RTF < 1（全部实时） | — | **70/70** |
+
+**流式**（stream_batch=24，含 TTFA 统计）：
+
+| 分组 | RTF | TTFA |
+|------|:---:|:----:|
+| 中文短句（25条） | 0.622 | 976ms |
+| 中文长文（10条） | 0.570 | 978ms |
+| 英文短句（25条） | 0.672 | 978ms |
+| 英文长文（10条） | 0.573 | 984ms |
+| **整体（70条）** | **0.626** | **978ms** |
+| RTF < 1（全部实时） | **69/70** | — |
 
 ---
 
