@@ -284,8 +284,32 @@ int ChatTTS::infer_stream(const std::string& text,
     std::vector<std::vector<uint16_t>> batch;
     batch.push_back(first.hidden);
 
-    int total_pcm  = 0;
-    int chunk_idx  = 0;   // counts how many chunks have been sent to callback
+    int total_pcm = 0;
+    int chunk_idx = 0;
+
+    // Buffer for head-trimming: accumulate first pass_first_n_batches chunks,
+    // then find the first non-silent sample and emit everything from there.
+    // This avoids skipping content while still removing leading noise.
+    std::vector<float> head_buf;
+    bool head_flushed = (sparams.pass_first_n_batches <= 0);
+    const float silence_thr = 5e-3f;  // trim threshold for leading noise
+
+    auto flush_head = [&]() {
+        if (head_flushed) return;
+        head_flushed = true;
+        if (head_buf.empty()) return;
+        // Find first sample above threshold
+        int start = 0;
+        for (int i = 0; i < (int)head_buf.size(); ++i) {
+            if (std::abs(head_buf[i]) > silence_thr) { start = i; break; }
+        }
+        std::vector<float> trimmed(head_buf.begin() + start, head_buf.end());
+        head_buf.clear();
+        if (!trimmed.empty()) {
+            total_pcm += (int)trimmed.size();
+            chunk_callback(trimmed);
+        }
+    };
 
     // 4. Decode loop — flush every stream_batch steps
     for (int step = 1; step < params.max_new_token && !done; ++step) {
@@ -296,12 +320,17 @@ int ChatTTS::infer_stream(const std::string& text,
         batch.push_back(sr.hidden);
 
         if ((int)batch.size() >= sparams.stream_batch || done) {
-            // Always decode the batch (we need running state in decoder)
             std::vector<float> chunk = decode_batch(batch);
             batch.clear();
-
             chunk_idx++;
-            if (chunk_idx > sparams.pass_first_n_batches && !chunk.empty()) {
+
+            if (chunk.empty()) continue;
+
+            if (!head_flushed && chunk_idx <= sparams.pass_first_n_batches) {
+                // Accumulate into head buffer instead of emitting
+                head_buf.insert(head_buf.end(), chunk.begin(), chunk.end());
+            } else {
+                flush_head();  // emit head buffer (trimmed) on first real chunk
                 total_pcm += (int)chunk.size();
                 chunk_callback(chunk);
             }
@@ -319,11 +348,15 @@ int ChatTTS::infer_stream(const std::string& text,
                 if (std::abs(chunk[i]) > 1e-5f) { keep = i+1; break; }
             chunk.resize(keep);
             if (!chunk.empty()) {
+                flush_head();
                 total_pcm += (int)chunk.size();
                 chunk_callback(chunk);
             }
         }
     }
+
+    // Edge case: text so short that all content is in head_buf
+    flush_head();
 
     return total_pcm;
 }

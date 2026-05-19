@@ -1,5 +1,6 @@
 // ChatTTS C++ Benchmark — mirrors python/benchmark.py
 // 70 samples: 25 ZH-short + 25 EN-short + 10 ZH-long + 10 EN-long
+// Tests both non-streaming (RTF) and streaming (RTF + TTFA).
 
 #include "chattts.h"
 #include <iostream>
@@ -88,48 +89,62 @@ static const std::vector<std::string> TEST_SAMPLES = {
     "The deployment of AI models on specialized inference hardware like the BM1684X requires a comprehensive toolchain that handles model conversion, optimization, and runtime management. The TPU-MLIR compiler framework transforms models from standard formats like ONNX and PyTorch into optimized bmodel binaries that can efficiently utilize the chip's tensor processing units. This compilation process includes graph-level optimizations such as operator fusion, memory layout transformation, and precision calibration to maximize inference performance.",
 };
 
-static void print_stats(const std::string& name, const std::vector<double>& arr) {
-    if (arr.empty()) return;
-    double sum = std::accumulate(arr.begin(), arr.end(), 0.0);
+using Clock = std::chrono::steady_clock;
+using Ms    = std::chrono::duration<double, std::milli>;
+
+static void print_stats(const std::string& label, const std::vector<double>& arr,
+                        const std::string& unit = "", double threshold = 0.0) {
+    if (arr.empty()) { printf("\n  %s: (no data)\n", label.c_str()); return; }
+    double sum  = std::accumulate(arr.begin(), arr.end(), 0.0);
     double mean = sum / arr.size();
-    std::vector<double> sorted = arr;
-    std::sort(sorted.begin(), sorted.end());
-    double median = sorted[sorted.size() / 2];
-    double mx = sorted.back(), mn = sorted.front();
+    std::vector<double> s = arr;
+    std::sort(s.begin(), s.end());
+    double median = s[s.size() / 2];
     double var = 0;
     for (double v : arr) var += (v - mean) * (v - mean);
     double stddev = std::sqrt(var / arr.size());
-    int rt_ok = 0;
-    for (double v : arr) if (v < 1.0) rt_ok++;
 
-    printf("\n  %s (%d samples):\n", name.c_str(), (int)arr.size());
-    printf("    平均 RTF : %.3f\n", mean);
-    printf("    最大 RTF : %.3f\n", mx);
-    printf("    最小 RTF : %.3f\n", mn);
-    printf("    中位 RTF : %.3f\n", median);
-    printf("    标准差   : %.3f\n", stddev);
-    printf("    RTF < 1  : %d/%d (%.0f%%)\n", rt_ok, (int)arr.size(),
-           100.0 * rt_ok / arr.size());
+    printf("\n  %s (%d samples):\n", label.c_str(), (int)arr.size());
+    printf("    均值  : %.3f %s\n", mean,   unit.c_str());
+    printf("    最大  : %.3f %s\n", s.back(), unit.c_str());
+    printf("    最小  : %.3f %s\n", s.front(), unit.c_str());
+    printf("    中位  : %.3f %s\n", median, unit.c_str());
+    printf("    标准差: %.3f %s\n", stddev, unit.c_str());
+    if (threshold > 0) {
+        int ok = 0;
+        for (double v : arr) if (v < threshold) ok++;
+        printf("    < %.3g: %d/%d (%.0f%%)\n", threshold,
+               ok, (int)arr.size(), 100.0 * ok / arr.size());
+    }
 }
 
 int main(int argc, char* argv[]) {
-    std::string model_dir = "/data/chatTTS-offical/models";
-    std::string spk_file  = "spk_emb.bin";
-    int   tpu_id  = 0;
-    int   warmup  = 3;
+    std::string model_dir  = "/data/chatTTS-offical/models";
+    std::string spk_file   = "spk_emb.bin";
+    int   tpu_id           = 0;
+    int   warmup           = 3;
+    int   stream_batch     = 24;
+    bool  no_stream        = false;  // skip streaming benchmark
+    bool  stream_only      = false;  // skip non-streaming benchmark
 
     for (int i = 1; i < argc; ++i) {
-        if (!std::strcmp(argv[i], "--model-dir") && i+1 < argc) model_dir = argv[++i];
-        else if (!std::strcmp(argv[i], "--spk-emb") && i+1 < argc) spk_file  = argv[++i];
-        else if (!std::strcmp(argv[i], "--tpu-id")  && i+1 < argc) tpu_id    = std::stoi(argv[++i]);
-        else if (!std::strcmp(argv[i], "--warmup")  && i+1 < argc) warmup    = std::stoi(argv[++i]);
+        if      (!std::strcmp(argv[i], "--model-dir")    && i+1 < argc) model_dir    = argv[++i];
+        else if (!std::strcmp(argv[i], "--spk-emb")      && i+1 < argc) spk_file     = argv[++i];
+        else if (!std::strcmp(argv[i], "--tpu-id")       && i+1 < argc) tpu_id       = std::stoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--warmup")       && i+1 < argc) warmup       = std::stoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--stream-batch") && i+1 < argc) stream_batch = std::stoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--no-stream"))                   no_stream    = true;
+        else if (!std::strcmp(argv[i], "--stream-only"))                 stream_only  = true;
     }
+    if (stream_only) no_stream = false;  // stream-only implies streaming is enabled
 
     printf("============================================================\n");
-    printf("ChatTTS C++ Benchmark — 70 samples (25ZH + 25EN short, 10ZH + 10EN long)\n");
+    printf("ChatTTS C++ Benchmark\n");
+    printf("  70 samples: 25 ZH-short + 25 EN-short + 10 ZH-long + 10 EN-long\n");
+    printf("  stream_batch = %d\n", stream_batch);
     printf("============================================================\n\n");
 
-    printf("[1/2] Loading model from: %s\n", model_dir.c_str());
+    printf("[1/3] Loading model from: %s\n", model_dir.c_str());
     ChatTTSConfig cfg;
     cfg.gpt_model_path      = model_dir + "/chattts-llama_int4_1dev_1024_bm1684x.bmodel";
     cfg.decoder_model_path  = model_dir + "/decoder_1-768-1024_bm1684x.bmodel";
@@ -138,106 +153,218 @@ int main(int argc, char* argv[]) {
     cfg.homophones_map_path = model_dir + "/asset/homophones_map.json";
     cfg.tpu_id              = tpu_id;
 
-    ChatTTS tts(cfg);
-
-    if (!spk_file.empty()) {
-        if (!tts.load_speaker(spk_file))
-            fprintf(stderr, "Warning: failed to load speaker: %s\n", spk_file.c_str());
-        else
-            printf("Speaker loaded: %s\n", spk_file.c_str());
-    }
-
     InferParams params;
     params.temperature   = 0.0001f;
     params.speed         = 5;
     params.max_new_token = 2048;
 
-    // Warmup
-    printf("\n[2/2] Warming up (%d rounds)...\n", warmup);
-    static const char* WARMUP_TEXTS[] = {
-        "warm up one",
-        "系统预热中，请稍候。",
-        "this is the third warm up sentence.",
-        "第四次预热，模型加载完成。",
-        "final warm up round, ready to benchmark.",
-    };
-    for (int i = 0; i < warmup && i < 5; ++i) {
-        tts.infer(WARMUP_TEXTS[i], params, /*do_normalize=*/false);
-        printf("  warm up %d/%d done\n", i+1, warmup);
-    }
-    printf("Warm up done.\n\n");
+    StreamParams sparams;
+    sparams.stream_batch         = stream_batch;
+    sparams.pass_first_n_batches = 2;
 
-    // Benchmark
     struct Sample {
-        std::string lang, group, text;
-        double infer_time, wav_len, rtf;
+        std::string lang, group;
+        double infer_s, audio_s, rtf;
         bool ok;
-        std::string err;
     };
-    std::vector<Sample> results;
-    int n = (int)TEST_SAMPLES.size();
+    std::vector<Sample> ns_results;
+    int N = (int)TEST_SAMPLES.size();
 
-    for (int i = 0; i < n; ++i) {
-        std::string lang  = (i < 25) ? "ZH" : (i < 50) ? "EN" : (i < 60) ? "ZH" : "EN";
-        std::string group = (i < 50) ? "short" : "long";
-        const std::string& text = TEST_SAMPLES[i];
-        std::string short_text = text.size() > 40 ? text.substr(0, 40) + "..." : text;
+    // ── Non-streaming benchmark ──────────────────────────────────────────────
+    // Scoped block: ChatTTS is destroyed at end of block, calling bmrt_destroy()
+    // which reclaims all BMRT heap blocks. The streaming instance created after
+    // this block then starts with a completely clean device memory state.
+    if (!stream_only) {
+        auto tts = std::make_unique<ChatTTS>(cfg);
+        if (!spk_file.empty()) {
+            if (!tts->load_speaker(spk_file))
+                fprintf(stderr, "Warning: failed to load speaker: %s\n", spk_file.c_str());
+            else
+                printf("Speaker loaded: %s\n", spk_file.c_str());
+        }
 
-        Sample s;
-        s.lang = lang; s.group = group; s.text = short_text;
-        try {
-            auto t0 = std::chrono::steady_clock::now();
-            std::vector<float> pcm = tts.infer(text, params, /*do_normalize=*/false);
-            auto t1 = std::chrono::steady_clock::now();
+        printf("\n[2/3] Warming up (%d rounds, non-stream)...\n", warmup);
+        static const char* WU[] = {
+            "warm up one", "系统预热中，请稍候。",
+            "this is the third warm up.", "第四次预热完成。", "final warm up.",
+        };
+        for (int i = 0; i < warmup && i < 5; ++i) {
+            tts->infer(WU[i], params, false);
+            printf("  warm up %d/%d done\n", i+1, warmup);
+        }
+        printf("Warm up done.\n\n");
 
-            s.infer_time = std::chrono::duration<double>(t1 - t0).count();
-            s.wav_len    = (double)pcm.size() / 24000.0;
-            s.rtf        = s.infer_time / s.wav_len;
-            s.ok         = true;
-            results.push_back(s);
-            printf("[%02d/%d] [%s/%s] RTF=%.3f | infer=%.2fs | audio=%.2fs | %s\n",
-                   i+1, n, lang.c_str(), group.c_str(),
-                   s.rtf, s.infer_time, s.wav_len, short_text.c_str());
-        } catch (const std::exception& e) {
-            s.ok = false; s.err = e.what();
-            results.push_back(s);
-            printf("[%02d/%d] [%s/%s] ERROR: %s\n",
-                   i+1, n, lang.c_str(), group.c_str(), e.what());
+        printf("[3/3] Non-streaming benchmark...\n");
+        printf("------------------------------------------------------------\n");
+
+        for (int i = 0; i < N; ++i) {
+            std::string lang  = (i < 25) ? "ZH" : (i < 50) ? "EN" : (i < 60) ? "ZH" : "EN";
+            std::string group = (i < 50) ? "short" : "long";
+            const std::string& text = TEST_SAMPLES[i];
+            std::string disp = text.size() > 38 ? text.substr(0, 38) + "..." : text;
+
+            Sample s; s.lang = lang; s.group = group;
+            try {
+                auto t0 = Clock::now();
+                auto pcm = tts->infer(text, params, false);
+                auto t1  = Clock::now();
+                s.infer_s = std::chrono::duration<double>(t1-t0).count();
+                s.audio_s = (double)pcm.size() / 24000.0;
+                s.rtf     = s.infer_s / s.audio_s;
+                s.ok      = true;
+                printf("[%02d/%d] [%s/%-5s] RTF=%.3f  infer=%.2fs  audio=%.2fs  %s\n",
+                       i+1, N, lang.c_str(), group.c_str(),
+                       s.rtf, s.infer_s, s.audio_s, disp.c_str());
+            } catch (const std::exception& e) {
+                s.ok = false;
+                printf("[%02d/%d] [%s/%-5s] ERROR: %s\n", i+1, N, lang.c_str(), group.c_str(), e.what());
+            }
+            ns_results.push_back(s);
+        }
+        // tts destroyed here → bmrt_destroy() → clean heap for streaming
+        printf("\nNon-streaming done. BMRT heap reset.\n");
+    }
+
+    // ── Streaming benchmark ──────────────────────────────────────────────────
+    struct StreamSample {
+        std::string lang, group;
+        double infer_s, audio_s, rtf, ttfa_ms;
+        bool ok;
+    };
+    std::vector<StreamSample> st_results;
+
+    if (!no_stream) {
+        printf("\n[3/3] Streaming benchmark (stream_batch=%d)...\n", stream_batch);
+        printf("------------------------------------------------------------\n");
+
+        auto stts = std::make_unique<ChatTTS>(cfg);
+        if (!spk_file.empty()) stts->load_speaker(spk_file);
+
+        // Warmup for stream-only mode (otherwise warmup was done in non-stream block above)
+        if (stream_only) {
+            printf("\n[2/3] Warming up (%d rounds, stream)...\n", warmup);
+            static const char* WU[] = {
+                "warm up one", "系统预热中，请稍候。",
+                "this is the third warm up.", "第四次预热完成。", "final warm up.",
+            };
+            for (int i = 0; i < warmup && i < 5; ++i) {
+                stts->infer(WU[i], params, false);
+                printf("  warm up %d/%d done\n", i+1, warmup);
+            }
+            printf("Warm up done.\n\n");
+        }
+
+        for (int i = 0; i < N; ++i) {
+            std::string lang  = (i < 25) ? "ZH" : (i < 50) ? "EN" : (i < 60) ? "ZH" : "EN";
+            std::string group = (i < 50) ? "short" : "long";
+            const std::string& text = TEST_SAMPLES[i];
+            std::string disp = text.size() > 30 ? text.substr(0, 30) + "..." : text;
+
+            StreamSample s; s.lang = lang; s.group = group;
+            try {
+                std::vector<float> pcm;
+                bool first = true;
+                double ttfa_ms = 0;
+                auto t0 = Clock::now();
+
+                stts->infer_stream(text, params, sparams,
+                    [&](const std::vector<float>& chunk) {
+                        if (first) {
+                            ttfa_ms = Ms(Clock::now() - t0).count();
+                            first = false;
+                        }
+                        pcm.insert(pcm.end(), chunk.begin(), chunk.end());
+                    }, false);
+
+                auto t1 = Clock::now();
+                s.infer_s = std::chrono::duration<double>(t1-t0).count();
+                s.audio_s = (double)pcm.size() / 24000.0;
+                s.rtf     = s.audio_s > 0 ? s.infer_s / s.audio_s : 0;
+                s.ttfa_ms = ttfa_ms;
+                s.ok      = true;
+                printf("[%02d/%d] [%s/%-5s] RTF=%.3f  TTFA=%5.0fms  infer=%.2fs  audio=%.2fs  %s\n",
+                       i+1, N, lang.c_str(), group.c_str(),
+                       s.rtf, s.ttfa_ms, s.infer_s, s.audio_s, disp.c_str());
+            } catch (const std::exception& e) {
+                s.ok = false;
+                printf("[%02d/%d] [%s/%-5s] ERROR: %s\n", i+1, N, lang.c_str(), group.c_str(), e.what());
+            }
+            st_results.push_back(s);
         }
     }
 
-    // Statistics
+    // ── Summary ──────────────────────────────────────────────────────────────
     printf("\n============================================================\n");
     printf("RESULTS SUMMARY\n");
     printf("============================================================\n");
 
-    auto collect = [&](const std::string& lang, const std::string& group) {
+    auto collect_rtf = [&](const std::vector<Sample>& res,
+                           const std::string& lang, const std::string& group) {
         std::vector<double> v;
-        for (auto& r : results)
+        for (auto& r : res)
             if (r.ok && (lang.empty() || r.lang == lang) && (group.empty() || r.group == group))
                 v.push_back(r.rtf);
         return v;
     };
+    auto collect_st_rtf = [&](const std::string& lang, const std::string& group) {
+        std::vector<double> v;
+        for (auto& r : st_results)
+            if (r.ok && (lang.empty() || r.lang == lang) && (group.empty() || r.group == group))
+                v.push_back(r.rtf);
+        return v;
+    };
+    auto collect_ttfa = [&](const std::string& lang, const std::string& group) {
+        std::vector<double> v;
+        for (auto& r : st_results)
+            if (r.ok && (lang.empty() || r.lang == lang) && (group.empty() || r.group == group))
+                v.push_back(r.ttfa_ms);
+        return v;
+    };
 
-    print_stats("全部样本",  collect("", ""));
-    print_stats("中文-短句", collect("ZH", "short"));
-    print_stats("中文-长文", collect("ZH", "long"));
-    print_stats("英文-短句", collect("EN", "short"));
-    print_stats("英文-长文", collect("EN", "long"));
-    print_stats("中文汇总",  collect("ZH", ""));
-    print_stats("英文汇总",  collect("EN", ""));
+    printf("\n━━ 非流式 RTF ━━\n");
+    print_stats("全部样本",  collect_rtf(ns_results, "", ""),      "", 1.0);
+    print_stats("中文-短句", collect_rtf(ns_results, "ZH", "short"), "", 1.0);
+    print_stats("中文-长文", collect_rtf(ns_results, "ZH", "long"),  "", 1.0);
+    print_stats("英文-短句", collect_rtf(ns_results, "EN", "short"), "", 1.0);
+    print_stats("英文-长文", collect_rtf(ns_results, "EN", "long"),  "", 1.0);
 
-    double total_infer = 0, total_audio = 0;
-    int errors = 0;
-    for (auto& r : results) {
-        if (r.ok) { total_infer += r.infer_time; total_audio += r.wav_len; }
-        else errors++;
+    if (!no_stream && !st_results.empty()) {
+        printf("\n━━ 流式 RTF ━━\n");
+        print_stats("全部样本",  collect_st_rtf("", ""),      "", 1.0);
+        print_stats("中文-短句", collect_st_rtf("ZH", "short"), "", 1.0);
+        print_stats("中文-长文", collect_st_rtf("ZH", "long"),  "", 1.0);
+        print_stats("英文-短句", collect_st_rtf("EN", "short"), "", 1.0);
+        print_stats("英文-长文", collect_st_rtf("EN", "long"),  "", 1.0);
+
+        printf("\n━━ 流式 TTFA (ms) ━━\n");
+        print_stats("全部样本",  collect_ttfa("", ""),      "ms");
+        print_stats("中文-短句", collect_ttfa("ZH", "short"), "ms");
+        print_stats("中文-长文", collect_ttfa("ZH", "long"),  "ms");
+        print_stats("英文-短句", collect_ttfa("EN", "short"), "ms");
+        print_stats("英文-长文", collect_ttfa("EN", "long"),  "ms");
     }
-    printf("\n  总推理时间: %.1fs\n", total_infer);
-    printf("  总音频时长: %.1fs\n", total_audio);
-    printf("  整体 RTF  : %.3f\n", total_infer / total_audio);
-    if (errors) printf("  失败样本  : %d\n", errors);
 
+    // Totals
+    printf("\n━━ 整体统计 ━━\n");
+    {
+        double ti = 0, ta = 0; int err = 0;
+        for (auto& r : ns_results) { if (r.ok) { ti += r.infer_s; ta += r.audio_s; } else err++; }
+        printf("\n  非流式 — 总推理: %.1fs  总音频: %.1fs  整体RTF: %.3f",
+               ti, ta, ta > 0 ? ti/ta : 0);
+        if (err) printf("  失败: %d", err);
+        printf("\n");
+    }
+    if (!no_stream && !st_results.empty()) {
+        double ti = 0, ta = 0, ttfa_sum = 0; int err = 0, cnt = 0;
+        for (auto& r : st_results) {
+            if (r.ok) { ti += r.infer_s; ta += r.audio_s; ttfa_sum += r.ttfa_ms; cnt++; }
+            else err++;
+        }
+        printf("  流式   — 总推理: %.1fs  总音频: %.1fs  整体RTF: %.3f  均值TTFA: %.0fms",
+               ti, ta, ta > 0 ? ti/ta : 0, cnt > 0 ? ttfa_sum/cnt : 0);
+        if (err) printf("  失败: %d", err);
+        printf("\n");
+    }
     printf("============================================================\n");
     return 0;
 }
