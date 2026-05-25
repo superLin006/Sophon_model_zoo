@@ -4,7 +4,7 @@
 1_third_party/**/*
 !1_third_party/**/.gitkeep
 
-# 模型权重
+# 模型权重（含下载的 HuggingFace/ModelScope 原始权重目录）
 *.pt
 *.pth
 *.bin
@@ -12,6 +12,8 @@
 *.onnx.data
 *.bmodel
 *.npz
+*.safetensors
+QwenLLM/Qwen3-4B-AWQ/
 
 # 测试数据（用 .gitkeep 保留目录结构）
 test_data/*
@@ -28,6 +30,11 @@ __pycache__/
 .venv/
 dist/
 build/
+
+# LLM-TPU 编译产物（二进制静态/动态库，从 sophgo 官方获取）
+*.a
+*.so
+*.so.*
 
 # Conda 环境
 env/

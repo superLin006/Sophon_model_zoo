@@ -10,6 +10,8 @@ Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP
 | [SenseVoice Small](sensevoice/) | 语音识别 + 情感/事件（CTC） | FP16 | RTF 0.0095 | ✅ 完成 |
 | [ChatTTS](chatTTS/) | 文本转语音（自回归 + DVAE + Vocos） | GPT INT4 + FP16 | RTF 0.53（非流式）/ 0.59（流式），TTFA ~980ms | ✅ 完成 |
 | [VITS-MeloTTS](vits-melo-tts-zh_en/) | 文本转语音（中英双语） | FP32 | RTF ~0.12 | ✅ 完成 |
+| [Qwen2.5-3B](QwenLLM/) | LLM 意图识别 | INT4 (W4BF16) | FTL 1.49s，TPS 20.9，准确率 10/10 | ✅ 完成 |
+| [Qwen3-4B](QwenLLM/) | LLM 意图识别（no_think 模式） | W4F16 | FTL 2.05s，TPS 14.8，E2E 2.95s | ✅ 完成 |
 
 ## 项目结构
 
@@ -17,10 +19,6 @@ Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP
 Sophon_model_zoo/
 ├── 0_Toolkits/               # Sophon SOC SDK（不入库，.gitkeep 占位）
 ├── 1_third_party/            # 第三方库头文件与静态库（不入库，.gitkeep 占位）
-│   ├── fftw/                 # fftw3 aarch64（whisper / chatTTS iSTFT 使用）
-│   ├── kaldi_native_fbank/   # kaldi-native-fbank aarch64（sensevoice 使用）
-│   ├── sophon/               # Sophon SDK 头文件 + libbmlib/libbmrt（chatTTS 使用）
-│   └── nlohmann/             # nlohmann/json.hpp 头文件（chatTTS 使用）
 ├── 2_utils/                  # 公共 C 工具库（图像/音频处理）
 ├── 3_docker/
 │   ├── Dockerfile.cross-build  # Ubuntu 20.04 aarch64 交叉编译镜像
@@ -30,19 +28,29 @@ Sophon_model_zoo/
 ├── whisper/                  # Whisper Base 移植
 ├── sensevoice/               # SenseVoice Small 移植
 ├── chatTTS/                  # ChatTTS 移植（纯 bmruntime C++，支持流式）
-└── vits-melo-tts-zh_en/      # VITS-MeloTTS 中英双语移植
+├── vits-melo-tts-zh_en/      # VITS-MeloTTS 中英双语移植
+└── QwenLLM/                  # Qwen 系列 LLM 意图识别
+    ├── qwen2.5/              # Qwen2.5-3B-INT4（推荐，seq=2048）
+    ├── qwen3/                # Qwen3-4B-W4F16（no_think 模式，seq=2048）
+    ├── LLM-TPU/              # sophgo 官方 demo（Qwen2/Qwen2_5/Qwen3）
+    ├── benchmark_intent.py   # 意图识别 benchmark 脚本
+    └── BENCHMARK_RESULTS.md  # 详细性能对比
 ```
 
 ## 转换流程
 
 ```
-PyTorch (.pt)
-    ↓  export_onnx.py  [Conda: sophon-export]
-ONNX (.onnx)
-    ↓  gen_bmodel.sh  [Docker: sophgo/tpuc_dev:latest]
+PyTorch / Safetensors
+    ↓  llm_convert.py  [Docker: sophgo/tpuc_dev:latest, TPU-MLIR v1.28.1]
 BModel (.bmodel)
-    ↓  build.sh  [Docker: sophon-cross-build]
-aarch64 可执行文件  →  scp 到 BM1684X 板卡运行
+    ↓  deploy_to_board.sh
+aarch64 板卡运行
+```
+
+非 LLM 模型额外需要 ONNX 中间步骤：
+
+```
+PyTorch (.pt)  →  export_onnx.py  →  ONNX  →  gen_bmodel.sh  →  BModel
 ```
 
 ## 快速开始
@@ -54,10 +62,10 @@ conda env create -f environment.yml
 conda activate sophon-export
 ```
 
-### 2. 构建交叉编译镜像（只需一次）
+### 2. 启动 TPU-MLIR 容器
 
 ```bash
-docker build -t sophon-cross-build 3_docker/
+./3_docker/run_docker.sh
 ```
 
 ### 3. 移植某个模型
@@ -67,11 +75,12 @@ docker build -t sophon-cross-build 3_docker/
 - [sensevoice/README.md](sensevoice/README.md)
 - [chatTTS/README.md](chatTTS/README.md)
 - [vits-melo-tts-zh_en/README.md](vits-melo-tts-zh_en/README.md)
+- [QwenLLM/BENCHMARK_RESULTS.md](QwenLLM/BENCHMARK_RESULTS.md)
 
-## 技术栈
+## 技术要点
 
-- **芯片**: Sophon BM1684X
-- **SDK**: SDK-23.09 LTS SP4
+- **芯片**: Sophon BM1684X，SDK-23.09 LTS SP4
 - **转换工具**: TPU-MLIR v1.28.1（`sophgo/tpuc_dev:latest`）
+- **LLM 转换**: `llm_convert.py`，AWQ 量化只支持 `--quantize w4f16`
+- **容器 transformers 版本**: 固定 4.51.1（`pip install transformers==4.51.1`），5.x 与 PyTorch 2.1.0+cpu 不兼容
 - **交叉编译**: Ubuntu 20.04 + gcc 9.4（兼容板卡 glibc 2.31）
-- **支持精度**: FP32 / FP16 / INT8 / INT4
