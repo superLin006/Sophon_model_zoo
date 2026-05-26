@@ -14,6 +14,18 @@
 *.npz
 *.safetensors
 QwenLLM/Qwen3-4B-AWQ/
+QwenLLM/Qwen3-0.6B/
+QwenLLM/Qwen3-1.7B/
+QwenLLM/Qwen3.5-0.8B/
+QwenLLM/qwen3/qwen3_4b_seq2048/
+QwenLLM/qwen3/qwen3_0.6b_seq2048/
+QwenLLM/qwen3/qwen3_1.7b_seq2048/
+QwenLLM/qwen3/qwen35_0.8b_text_seq2048/
+
+# Qwen3.5 tokenizer 词表（体积大，板子上从权重目录拷贝）
+QwenLLM/qwen3/qwen35_config/tokenizer.json
+QwenLLM/qwen3/qwen35_config/vocab.json
+QwenLLM/qwen3/qwen35_config/merges.txt
 
 # 测试数据（用 .gitkeep 保留目录结构）
 test_data/*

@@ -50,7 +50,6 @@ SYSTEM_PROMPT = (
 
 
 def run_benchmark(args):
-    import chat
     from transformers import AutoTokenizer, GenerationConfig
 
     # 强制行刷新，SSH 管道下不丢输出
@@ -70,15 +69,23 @@ def run_benchmark(args):
 
     # 加载模型
     print("加载模型...")
-    model = chat.Qwen() if hasattr(chat, 'Qwen') else chat.Qwen3() if hasattr(chat, 'Qwen3') else None
+    if args.pipeline:
+        # 纯 Python sail pipeline（用于 Qwen3.5 等无 chat.so 的模型）
+        import importlib.util, pathlib
+        spec = importlib.util.spec_from_file_location("_pipeline", args.pipeline)
+        mod  = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        model = mod.Qwen()
+    else:
+        import chat
+        model = chat.Qwen() if hasattr(chat, 'Qwen') else chat.Qwen3() if hasattr(chat, 'Qwen3') else None
+        if model is None:
+            for cls_name in ['Qwen', 'Qwen3', 'Qwen2', 'LLM']:
+                if hasattr(chat, cls_name):
+                    model = getattr(chat, cls_name)()
+                    break
     if model is None:
-        # 尝试通用名称
-        for cls_name in ['Qwen', 'Qwen3', 'Qwen2', 'LLM']:
-            if hasattr(chat, cls_name):
-                model = getattr(chat, cls_name)()
-                break
-    if model is None:
-        print("ERROR: 找不到 chat 模块中的模型类，请检查 chat.cpython*.so 是否正确编译")
+        print("ERROR: 找不到模型类，请检查 chat.cpython*.so 或 --pipeline 参数")
         sys.exit(1)
 
     devices = [int(d) for d in args.devid.split(",")]
@@ -214,5 +221,6 @@ if __name__ == "__main__":
     parser.add_argument("-d", "--devid",       default="0",      help="device ID")
     parser.add_argument("--quick",    action='store_true', help="只测前3条用例，快速验证流程")
     parser.add_argument("--no_think", action='store_true', help="禁用 Qwen3 thinking 模式（enable_thinking=False）")
+    parser.add_argument("--pipeline", default=None, help="纯 Python pipeline 文件路径（用于无 chat.so 的模型，如 Qwen3.5）")
     args = parser.parse_args()
     run_benchmark(args)
