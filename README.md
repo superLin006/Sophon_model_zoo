@@ -12,7 +12,7 @@ Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP
 | [VITS-MeloTTS](vits-melo-tts-zh_en/) | 文本转语音（中英双语） | FP32 | RTF ~0.12 | ✅ 完成 |
 | [Qwen2.5-3B](QwenLLM/) | LLM 意图识别 | W4BF16 (GPTQ) | FTL 1.49s，TPS 20.9，10/10 | ✅ 完成 |
 | [Qwen3-1.7B](QwenLLM/) | LLM 意图识别（no_think） | W4BF16 (PTQ) | FTL 0.88s，TPS 29.1，E2E 1.20s，9/10 ⭐ | ✅ 完成 |
-| [Qwen3.5-0.8B](QwenLLM/) | LLM 意图识别（GatedDeltaNet hybrid） | BF16 dynamic | 待测 | 🔄 已编译 |
+| [Qwen3.5-0.8B](QwenLLM/) | LLM 意图识别（GatedDeltaNet hybrid） | BF16 dynamic | SDK-23.09 不支持 ChunkGatedDeltaRule | ❌ 板卡不兼容 |
 | [Qwen3-0.6B](QwenLLM/) | LLM 意图识别（no_think） | W4BF16 (PTQ) | FTL 0.51s，TPS 52.6，E2E 0.92s，8/10 | ⚠️ 不稳定 |
 | [Qwen3-4B](QwenLLM/) | LLM 意图识别（no_think） | W4F16 (AWQ) | FTL 2.05s，TPS 14.8，E2E 2.95s，10/10 | ✅ 完成 |
 

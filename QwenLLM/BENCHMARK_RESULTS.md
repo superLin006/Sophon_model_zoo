@@ -149,7 +149,7 @@
 
 ---
 
-## Qwen3.5-0.8B（已编译，待测 🔄）
+## Qwen3.5-0.8B（板卡不兼容 ❌）
 
 ### 编译记录
 
@@ -165,13 +165,24 @@
   2. 绕过 `AutoConfig`（transformers 4.51.1 不识别 `qwen3_5` 模型类型）
   3. `mrope()`/`mrope_batch()`/`get_mrope_index()` 支持 `partial_rotary_factor<1`
 
-> 性能数据待板卡实测更新。预期 BF16 dynamic 相比 W4BF16 static 会更慢，但架构新颖。
+### 板卡部署结果
+
+**无法运行**：bmodel 加载阶段即崩溃，错误：
+
+```
+[a53lite_runtime] load library send api error, ret 2
+[BMRT] FATAL:BMRT_ASSERT: _kernel_modules[core_id]
+```
+
+**根本原因**：`ChunkGatedDeltaRule` 是 TPU-MLIR v1.28.1 新增的自定义 op，其 dynamic codegen kernel 需要对应版本的 bmrt runtime 才能加载。板卡 libbmrt 版本为 **SDK-23.09 LTS（branch: sophon-23.09-lts, 2024-12-27）**，不包含该 op 的 kernel 支持，无论 PCIe 还是 SoC 模式均无法加载。
+
+**结论**：Qwen3.5-0.8B 的 GatedDeltaNet 架构在 SDK-23.09 板卡上不可用，需升级板卡 SDK 至 v1.28 对应版本方可支持。
 
 ---
 
 ## 后续方向
 
-1. **qwen3.5-0.8b 实测**：部署到板卡，测量 FTL/TPS/E2E 及意图识别准确率
-2. **qwen3-1.7b 系统提示词优化**：明确 `set_tool` 覆盖"橡皮擦/选择框等工具切换"，预计可达 10/10
-3. **qwen3-0.6b 格式问题**：需在 prompt 中强调"输出纯 JSON，不加代码块"，准确率问题更难解决
-4. **热降频问题（qwen3-4b）**：考虑推理间隔或改进散热
+1. **qwen3-1.7b 系统提示词优化**：明确 `set_tool` 覆盖"橡皮擦/选择框等工具切换"，预计可达 10/10
+2. **qwen3-0.6b 格式问题**：需在 prompt 中强调"输出纯 JSON，不加代码块"，准确率问题更难解决
+3. **热降频问题（qwen3-4b）**：考虑推理间隔或改进散热
+4. **Qwen3.5-0.8B**：等待板卡 SDK 升级后重新验证
