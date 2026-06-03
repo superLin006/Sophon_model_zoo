@@ -66,13 +66,8 @@ private:
     std::vector<VocabEntry> vocab_;
     std::vector<float>     mel_filters_;           // [80 x 201]
 
-    // KV Cache buffers（与 MTK 对齐，固定 [N_LAYER, 1, PADDING_SIZE, N_STATE]）
-    // 展平存储：[N_LAYER * PADDING_SIZE * N_STATE]，按 layer 连续
-    std::vector<float> past_self_k_;    // [6, 1, 448, 512]
-    std::vector<float> past_self_v_;
-    std::vector<float> cross_k_;        // [6, 1, 1500, 512]，首步后固定
-    std::vector<float> cross_v_;
-
+    // KV cache 常驻 device（在 run_decoder 内绑定到 decoder 的 KV input tensor，全程不下载 host）。
+    // self KV 每步 output→input d2d 写增量，cross KV 首步 d2d 后固定。详见 run_decoder。
     int  cache_len_              = 0;
     bool cross_cache_initialized_ = false;
     bool initialized_            = false;

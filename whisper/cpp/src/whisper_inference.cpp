@@ -92,11 +92,7 @@ int WhisperInference::init(const char* model_dir, const char* precision) {
         LOGE("Failed to load vocab"); return -1;
     }
 
-    // KV Cache buffers（全零初始化）
-    past_self_k_.resize(N_LAYER * PADDING_SIZE * N_STATE, 0.f);
-    past_self_v_.resize(N_LAYER * PADDING_SIZE * N_STATE, 0.f);
-    cross_k_.resize(N_LAYER * N_AUDIO_CTX * N_STATE, 0.f);
-    cross_v_.resize(N_LAYER * N_AUDIO_CTX * N_STATE, 0.f);
+    // KV cache 常驻 device，无需 host buffer（在 run_decoder 内绑定到 decoder KV input tensor）
 
     initialized_ = true;
     LOG("Init done");
@@ -224,10 +220,8 @@ bool WhisperInference::run_encoder(const std::vector<float>& mel,
 // ============================================================
 
 void WhisperInference::reset_kv_cache() {
-    std::fill(past_self_k_.begin(), past_self_k_.end(), 0.f);
-    std::fill(past_self_v_.begin(), past_self_v_.end(), 0.f);
-    std::fill(cross_k_.begin(),     cross_k_.end(),     0.f);
-    std::fill(cross_v_.begin(),     cross_v_.end(),     0.f);
+    // KV cache 现常驻 device，清零在 run_decoder 分配 in_ts 后做（bm_memset device buffer）。
+    // 这里只重置状态标志。
     cache_len_               = 0;
     cross_cache_initialized_ = false;
 }
@@ -273,16 +267,10 @@ bool WhisperInference::run_decoder(const std::vector<float>& audio_features,
     int in_num  = decoder_info_->input_num;   // 28
     int out_num = decoder_info_->output_num;  // 25
 
-    // 工作 buffer
+    // 工作 buffer（KV 全部常驻 device，host 侧只保留 pos/mask/logits 小 buffer）
     std::vector<float> pos_emb(N_STATE);
     std::vector<float> self_attn_mask(PADDING_SIZE + 1);
     std::vector<float> logits(VOCAB_NUM);
-
-    // new_self_k/v: [N_LAYER, 1, N_STATE]（每步输出单步 KV，C++ 写入 cache）
-    std::vector<float> new_self_k(N_LAYER * N_STATE);
-    std::vector<float> new_self_v(N_LAYER * N_STATE);
-    std::vector<float> new_cross_k(N_LAYER * N_AUDIO_CTX * N_STATE);
-    std::vector<float> new_cross_v(N_LAYER * N_AUDIO_CTX * N_STATE);
 
     // 分配 device tensors（一次性，循环复用）
     std::vector<bm_tensor_t> in_ts(in_num), out_ts(out_num);
@@ -296,6 +284,14 @@ bool WhisperInference::run_decoder(const std::vector<float>& audio_features,
     bm_free_device(bm_handle_, in_ts[0].device_mem);
     bmrt_tensor(&in_ts[0], decoder_rt_, BM_INT32,
                 decoder_info_->stages[0].input_shapes[0]);
+
+    // KV cache 常驻 device：past_self(in_ts[4..15]) + cross(in_ts[16..27]) 全程留 device。
+    // 首步前清零这些 input buffer（原靠每步 host 上传清零的 host buffer 保证，现直接清 device）。
+    {
+        int z = 0;
+        for (int i = 4; i < 28; i++)
+            bm_memset_device_ext(bm_handle_, &z, 1, in_ts[i].device_mem);
+    }
 
     auto run_one_step = [&](int token_id) -> bool {
         // --- 准备输入 ---
@@ -315,71 +311,48 @@ bool WhisperInference::run_decoder(const std::vector<float>& audio_features,
         create_self_attn_mask(cache_len_, self_attn_mask.data());
         bm_memcpy_s2d(bm_handle_, in_ts[3].device_mem, self_attn_mask.data());
 
-        // 4-9. past_self_k_0..5: [1, 448, 512]（各层独立，按层偏移）
-        for (int l = 0; l < N_LAYER; l++) {
-            bm_memcpy_s2d(bm_handle_, in_ts[4 + l].device_mem,
-                          past_self_k_.data() + l * PADDING_SIZE * N_STATE);
-        }
-        // 10-15. past_self_v_0..5
-        for (int l = 0; l < N_LAYER; l++) {
-            bm_memcpy_s2d(bm_handle_, in_ts[10 + l].device_mem,
-                          past_self_v_.data() + l * PADDING_SIZE * N_STATE);
-        }
-        // 16-21. cross_k_0..5: [1, 1500, 512]
-        for (int l = 0; l < N_LAYER; l++) {
-            bm_memcpy_s2d(bm_handle_, in_ts[16 + l].device_mem,
-                          cross_k_.data() + l * N_AUDIO_CTX * N_STATE);
-        }
-        // 22-27. cross_v_0..5
-        for (int l = 0; l < N_LAYER; l++) {
-            bm_memcpy_s2d(bm_handle_, in_ts[22 + l].device_mem,
-                          cross_v_.data() + l * N_AUDIO_CTX * N_STATE);
-        }
+        // 4-27. past_self_k/v(4-15) + cross_k/v(16-27)：全部常驻 device，不再每步上传。
+        //   - past_self KV：上一步输出 new_self 已 d2d 写入这些 input buffer 的 cache_len 位置
+        //   - cross KV：首步推理后一次性 d2d 写入，之后内容固定不变
+        //   首步（cache_len_==0）时这些 input buffer 已被 reset_kv_cache 的 device memset 清零
 
         // --- 推理 ---
         if (!bm_infer(decoder_rt_, decoder_info_, in_ts, out_ts)) return false;
 
-        // --- 下载输出 ---
-        // 0. logits [1, 1, 51865]
+        // --- 处理输出 ---
+        // 0. logits [1, 1, 51865]：仍需下载到 host 做 greedy argmax（小数据，无法避免）
         bm_memcpy_d2s(bm_handle_, logits.data(), out_ts[0].device_mem);
 
-        // 1-6. new_self_k_0..5 [1, 1, 512]
-        for (int l = 0; l < N_LAYER; l++) {
-            bm_memcpy_d2s(bm_handle_,
-                          new_self_k.data() + l * N_STATE,
-                          out_ts[1 + l].device_mem);
+        // self KV：output new_self(out_ts[1..12]) d2d 写入 input past_self(in_ts[4..15])
+        //   的 cache_len_ 偏移位置。device 内传输，不经过 host。
+        //   past_self input 与 new_self output 是不同 device tensor，读写无冲突（同 Eureka 模式）。
+        // 防御：past_self buffer 每层容量 PADDING_SIZE 个 token，cache_len_ 必须 < PADDING_SIZE
+        if (cache_len_ >= PADDING_SIZE) {
+            LOGE("cache_len " << cache_len_ << " >= PADDING_SIZE " << PADDING_SIZE
+                 << "，KV cache 已满"); return false;
         }
-        // 7-12. new_self_v_0..5
+        const size_t self_step_bytes = (size_t)N_STATE * sizeof(float);  // 单层单 token KV
+        const size_t self_off        = (size_t)cache_len_ * N_STATE * sizeof(float);
         for (int l = 0; l < N_LAYER; l++) {
-            bm_memcpy_d2s(bm_handle_,
-                          new_self_v.data() + l * N_STATE,
-                          out_ts[7 + l].device_mem);
-        }
-        // 13-18. new_cross_k（首步后不再使用，但仍需下载避免 device mem 泄漏）
-        if (!cross_cache_initialized_) {
-            for (int l = 0; l < N_LAYER; l++) {
-                bm_memcpy_d2s(bm_handle_,
-                              new_cross_k.data() + l * N_AUDIO_CTX * N_STATE,
-                              out_ts[13 + l].device_mem);
-                bm_memcpy_d2s(bm_handle_,
-                              new_cross_v.data() + l * N_AUDIO_CTX * N_STATE,
-                              out_ts[19 + l].device_mem);
-            }
-            std::memcpy(cross_k_.data(), new_cross_k.data(),
-                        cross_k_.size() * sizeof(float));
-            std::memcpy(cross_v_.data(), new_cross_v.data(),
-                        cross_v_.size() * sizeof(float));
-            cross_cache_initialized_ = true;
+            // new_self_k_l (out_ts[1+l]) → past_self_k_l (in_ts[4+l]) @ cache_len_
+            bm_memcpy_d2d_byte(bm_handle_, in_ts[4 + l].device_mem,  self_off,
+                               out_ts[1 + l].device_mem, 0, self_step_bytes);
+            // new_self_v_l (out_ts[7+l]) → past_self_v_l (in_ts[10+l]) @ cache_len_
+            bm_memcpy_d2d_byte(bm_handle_, in_ts[10 + l].device_mem, self_off,
+                               out_ts[7 + l].device_mem, 0, self_step_bytes);
         }
 
-        // 写入 self KV cache（与 MTK memcpy 逻辑完全一致）
-        for (int l = 0; l < N_LAYER; l++) {
-            float* dst_k = past_self_k_.data() + l * PADDING_SIZE * N_STATE
-                           + cache_len_ * N_STATE;
-            float* dst_v = past_self_v_.data() + l * PADDING_SIZE * N_STATE
-                           + cache_len_ * N_STATE;
-            std::memcpy(dst_k, new_self_k.data() + l * N_STATE, N_STATE * sizeof(float));
-            std::memcpy(dst_v, new_self_v.data() + l * N_STATE, N_STATE * sizeof(float));
+        // cross KV：只首步 d2d。output new_cross(out_ts[13..24]) → input cross(in_ts[16..27])
+        //   整块复制，之后内容固定，后续步不再触碰。
+        if (!cross_cache_initialized_) {
+            const size_t cross_bytes = (size_t)N_AUDIO_CTX * N_STATE * sizeof(float);
+            for (int l = 0; l < N_LAYER; l++) {
+                bm_memcpy_d2d_byte(bm_handle_, in_ts[16 + l].device_mem, 0,
+                                   out_ts[13 + l].device_mem, 0, cross_bytes);
+                bm_memcpy_d2d_byte(bm_handle_, in_ts[22 + l].device_mem, 0,
+                                   out_ts[19 + l].device_mem, 0, cross_bytes);
+            }
+            cross_cache_initialized_ = true;
         }
         cache_len_++;
         return true;
