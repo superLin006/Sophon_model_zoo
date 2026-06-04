@@ -1,4 +1,4 @@
-# BM1684X Qwen 系列模型意图识别 Benchmark 结果
+# BM1684X Qwen3 系列模型意图识别 Benchmark 结果
 
 > 测试日期：2026-05-23 ~ 2026-05-25
 > 板卡：BM1684X SoC 模式 (6GB DDR, 9GB DevMem)
@@ -7,20 +7,20 @@
 
 ## 模型对比总览
 
-| 指标 | qwen2.5-3b ✅ | **qwen3-1.7b ⭐** | qwen3-0.6b | qwen3-4b |
-|------|:---:|:---:|:---:|:---:|
-| 编译工具 | TPU-MLIR v1.19 | TPU-MLIR v1.28.1 | TPU-MLIR v1.28.1 | TPU-MLIR v1.28.1 |
-| 量化方式 | W4BF16 (GPTQ) | W4BF16 (PTQ) | W4BF16 (PTQ) | W4F16 (AWQ) |
-| bmodel 大小 | 2.0GB | **1.4GB** | 562MB | 2.6GB |
-| DevMem 占用 | 2311MB | **1731MB** | 871MB | 3132MB |
-| 模型加载耗时 | 44.6s | **2.36s** | 1.19s | 57.5s（冷） |
-| **FTL（首字延迟）** | 1.487s | **0.878s** | 0.511s | 2.049s |
-| **Decode TPS** | 20.9 tok/s | **29.1 tok/s** | 52.6 tok/s | 14.8 tok/s |
-| **端到端延迟** | 2.04s | **1.20s** | 0.92s | 2.95s |
-| 意图识别准确率 | **10/10** | **9/10** ⚠️ | 8/10 ❌ | **10/10** |
-| thinking 模式 | 不适用 | 需关闭（`--no_think`） | 需关闭（`--no_think`） | 需关闭（`--no_think`） |
+| 指标 | **qwen3-1.7b ⭐** | qwen3-0.6b | qwen3-4b |
+|------|:---:|:---:|:---:|
+| 编译工具 | TPU-MLIR v1.28.1 | TPU-MLIR v1.28.1 | TPU-MLIR v1.28.1 |
+| 量化方式 | W4BF16 (PTQ) | W4BF16 (PTQ) | W4F16 (AWQ) |
+| bmodel 大小 | **1.4GB** | 562MB | 2.6GB |
+| DevMem 占用 | **1731MB** | 871MB | 3132MB |
+| 模型加载耗时 | **2.36s** | 1.19s | 57.5s（冷） |
+| **FTL（首字延迟）** | **0.878s** | 0.511s | 2.049s |
+| **Decode TPS** | **29.1 tok/s** | 52.6 tok/s | 14.8 tok/s |
+| **端到端延迟** | **1.20s** | 0.92s | 2.95s |
+| 意图识别准确率 | **9/10** ⚠️ | 8/10 ❌ | **10/10** |
+| thinking 模式 | 需关闭（`--no_think`） | 需关闭（`--no_think`） | 需关闭（`--no_think`） |
 
-**结论：推荐 qwen3-1.7b。** 比 qwen2.5-3b 快 1.7x，DevMem 减少 25%，加载仅 2.36s（vs 44.6s）；唯一失败的 case 07（橡皮擦 → `set_pen` 而非 `set_tool`）可通过系统提示词调整修复。
+**结论：推荐 qwen3-1.7b。** DevMem 占用适中（1.7GB），加载仅 2.36s，端到端延迟 1.2s；唯一失败的 case 07（橡皮擦 → `set_pen` 而非 `set_tool`）可通过系统提示词调整修复。
 
 0.6B 速度最快但准确率不足（8/10）且输出格式不稳定（带 markdown 代码块），不建议用于生产。
 
@@ -98,37 +98,6 @@
 
 ---
 
-## qwen2.5-3b（稳定基准 ✅）
-
-### 性能
-
-| 指标 | 数值 |
-|------|------|
-| bmodel 大小 | 2.0GB |
-| DevMem 占用 | 2311MB / 9070MB |
-| 模型加载耗时 | 44.6s |
-| 平均 FTL | **1.487s** |
-| 平均 Prefill 速度 | **46.1 token/s** |
-| 平均 Decode TPS | **20.9 token/s** |
-| 平均端到端延迟 | **2.043s** |
-
-### 10 条意图识别：10/10 ✅
-
-| # | 输入 | 输出 | 正确 |
-|---|------|------|:---:|
-| 1 | 帮我打开白板 | `{"action":"open_whiteboard","params":{}}` | ✅ |
-| 2 | 我要写字，用马克笔，笔迹大小调到12 | `{"action":"set_pen","params":{"pen_type":"马克笔","size":12}}` | ✅ |
-| 3 | 关闭当前窗口 | `{"action":"close_window","params":{}}` | ✅ |
-| 4 | 把音量调大一点 | `{"action":"set_volume","params":{}}` | ✅ |
-| 5 | 打开摄像头 | `{"action":"open_camera","params":{}}` | ✅ |
-| 6 | 我想画一个圆形 | `{"action":"draw_shape","params":{}}` | ✅ |
-| 7 | 切换到橡皮擦模式 | `{"action":"set_tool","params":{"tool":"橡皮擦"}}` | ✅ |
-| 8 | 保存当前文件 | `{"action":"save_file","params":{}}` | ✅ |
-| 9 | 帮我截图 | `{"action":"screenshot","params":{}}` | ✅ |
-| 10 | 退出程序 | `{"action":"close_window","params":{}}` | ✅ |
-
----
-
 ## qwen3-4b（可用，热降频明显 ⚠️）
 
 ### 编译记录
@@ -149,40 +118,8 @@
 
 ---
 
-## Qwen3.5-0.8B（板卡不兼容 ❌）
-
-### 编译记录
-
-- 架构：GatedDeltaNet hybrid（75% 线性注意力 + 25% 全注意力）
-- `head_dim=256`, `partial_rotary_factor=0.25`, 24 层
-- 编译约束：
-  - `ChunkGatedDeltaRule` 仅支持 dynamic codegen → `--dynamic` 必须
-  - W4/W8BF16 的 BM1684X A16MatMul 要求 N≥对齐值；DeltaNet 门控投影 N=16 不满足
-  - 最终方案：`--quantize bf16 --dynamic`
-- bmodel：`qwen3.5-0.8b_bf16_seq2048_bm1684x_1dev_dynamic_*.bmodel`，**1.5GB**
-- 需要三个 Python 补丁（见 `compile_qwen35_text_bmodel.sh`）：
-  1. `max_pixels=0` 纯文本路径 + `rotary_dim`/`mrope_section` 设置
-  2. 绕过 `AutoConfig`（transformers 4.51.1 不识别 `qwen3_5` 模型类型）
-  3. `mrope()`/`mrope_batch()`/`get_mrope_index()` 支持 `partial_rotary_factor<1`
-
-### 板卡部署结果
-
-**无法运行**：bmodel 加载阶段即崩溃，错误：
-
-```
-[a53lite_runtime] load library send api error, ret 2
-[BMRT] FATAL:BMRT_ASSERT: _kernel_modules[core_id]
-```
-
-**根本原因**：`ChunkGatedDeltaRule` 是 TPU-MLIR v1.28.1 新增的自定义 op，其 dynamic codegen kernel 需要对应版本的 bmrt runtime 才能加载。板卡 libbmrt 版本为 **SDK-23.09 LTS（branch: sophon-23.09-lts, 2024-12-27）**，不包含该 op 的 kernel 支持，无论 PCIe 还是 SoC 模式均无法加载。
-
-**结论**：Qwen3.5-0.8B 的 GatedDeltaNet 架构在 SDK-23.09 板卡上不可用，需升级板卡 SDK 至 v1.28 对应版本方可支持。
-
----
-
 ## 后续方向
 
 1. **qwen3-1.7b 系统提示词优化**：明确 `set_tool` 覆盖"橡皮擦/选择框等工具切换"，预计可达 10/10
 2. **qwen3-0.6b 格式问题**：需在 prompt 中强调"输出纯 JSON，不加代码块"，准确率问题更难解决
 3. **热降频问题（qwen3-4b）**：考虑推理间隔或改进散热
-4. **Qwen3.5-0.8B**：等待板卡 SDK 升级后重新验证
