@@ -67,6 +67,16 @@ class EncoderWrapper(nn.Module):
         return x
 
 
+def _raw_path_for(output_path: str) -> str:
+    """torch.onnx.export 对 >2GB 模型会把每个 initializer 写成同目录散文件。
+    给每个模型一个独立 _raw_<name> 子目录隔离这些散文件，避免不同模型(encoder/decoder)
+    的权重互相污染权重估算，也不污染 onnx 主目录。返回子目录内的 onnx 路径。"""
+    raw_dir = os.path.join(os.path.dirname(output_path),
+                           "_raw_" + os.path.basename(output_path).replace(".onnx", ""))
+    os.makedirs(raw_dir, exist_ok=True)
+    return os.path.join(raw_dir, os.path.basename(output_path))
+
+
 def export_encoder(model, output_path: str):
     print(f"\n[Encoder] 导出 -> {output_path}")
     wrapper = EncoderWrapper(model.encoder)
@@ -74,17 +84,19 @@ def export_encoder(model, output_path: str):
 
     dummy_mel = torch.zeros(1, model.dims.n_mels, 3000)
 
+    raw_path = _raw_path_for(output_path)
+
     torch.onnx.export(
         wrapper,
         dummy_mel,
-        output_path,
+        raw_path,
         input_names=["mel"],
         output_names=["audio_features"],
         opset_version=17,
         do_constant_folding=True,
     )
-    print(f"[Encoder] 导出完成")
-    return output_path
+    print(f"[Encoder] 导出完成 (raw -> {raw_path})")
+    return raw_path
 
 
 # ============================================================
@@ -241,17 +253,19 @@ def export_decoder(model, output_path: str):
     for i in range(n_layer): output_names.append(f"new_cross_k_{i}")
     for i in range(n_layer): output_names.append(f"new_cross_v_{i}")
 
+    raw_path = _raw_path_for(output_path)
+
     torch.onnx.export(
         wrapper,
         inputs,
-        output_path,
+        raw_path,
         input_names=input_names,
         output_names=output_names,
         opset_version=17,
         do_constant_folding=True,
     )
-    print(f"[Decoder] 导出完成")
-    return output_path
+    print(f"[Decoder] 导出完成 (raw -> {raw_path})")
+    return raw_path
 
 
 # ============================================================
@@ -276,25 +290,111 @@ def _fix_conv_kernel_shape(model):
     return model
 
 
+_PROTOBUF_2GB = 2 * 1024 * 1024 * 1024
+
+
 def verify_and_simplify(onnx_path: str):
     print(f"\n[验证] {os.path.basename(onnx_path)}")
-    model = onnx.load(onnx_path)
-    onnx.checker.check_model(model)
+    # check_model 传路径而非 model 对象：大模型(turbo encoder >2GB)序列化成单 proto 会超
+    # protobuf 2GB 上限，传路径让 checker 从磁盘读（支持外部数据 + >2GB）
+    onnx.checker.check_model(onnx_path)
     print(f"  ✅ ONNX 格式验证通过")
 
+    # onnxsim.simplify 会把整张图加载成单个 in-memory proto 并重新序列化，
+    # 超过 protobuf 2GB 上限就会崩（turbo encoder FP32 ≈2.5GB）。
+    # 对这类大模型直接跳过简化，把原图改名为 _sim 供下游 model_transform 使用——
+    # model_transform.py 自己会做常量折叠/简化，不依赖 onnxsim。
+    weight_bytes = _onnx_weight_bytes(onnx_path)
+    # 若 raw 在 _raw_* 子目录里，_sim 输出到其父目录（onnx 主目录）
+    raw_dir = os.path.dirname(onnx_path)
+    out_dir = os.path.dirname(raw_dir) if os.path.basename(raw_dir).startswith("_raw_") else raw_dir
+    sim_name = os.path.basename(onnx_path).replace(".onnx", "_sim.onnx")
+    sim_path = os.path.join(out_dir, sim_name)
+    if weight_bytes >= _PROTOBUF_2GB:
+        print(f"  ⚠️  权重 {weight_bytes/1024/1024/1024:.2f}GB > 2GB，跳过 onnxsim，"
+              f"直接补 Conv 属性并用外部数据另存")
+        model = onnx.load(onnx_path)
+        model = _fix_conv_kernel_shape(model)
+        data_name = os.path.basename(sim_path) + ".data"
+        onnx.save(model, sim_path, save_as_external_data=True,
+                  all_tensors_to_one_file=True, location=data_name,
+                  size_threshold=1024, convert_attribute=False)
+        print(f"  ✅ 已保存 -> {sim_path}（权重在 {data_name}）")
+        return sim_path
+
     print(f"  简化中 (onnxsim)...")
+    model = onnx.load(onnx_path)
     model_sim, ok = onnxsim.simplify(model)
     if ok:
         model_sim = _fix_conv_kernel_shape(model_sim)
-        sim_path = onnx_path.replace(".onnx", "_sim.onnx")
         onnx.save(model_sim, sim_path)
-        orig_size = os.path.getsize(onnx_path) / 1024 / 1024
-        sim_size  = os.path.getsize(sim_path)  / 1024 / 1024
-        print(f"  ✅ 简化完成: {orig_size:.1f}MB → {sim_size:.1f}MB -> {sim_path}")
+        sim_size = os.path.getsize(sim_path) / 1024 / 1024
+        print(f"  ✅ 简化完成 -> {sim_path} ({sim_size:.1f}MB)")
         return sim_path
     else:
         print(f"  ⚠️  简化失败，使用原始 ONNX")
         return onnx_path
+
+
+def _onnx_weight_bytes(onnx_path: str) -> int:
+    """估算 ONNX 权重总字节数（含 torch 分离出的外部数据散文件），判断是否超 protobuf 上限。
+    onnx_path 由 _raw_path_for 放在独立 _raw_ 子目录中，目录内只有该模型自己的文件，
+    故直接累加目录下所有文件即为该模型的总权重，无需按文件名猜测、也不会被其他模型污染。"""
+    onnx_dir = os.path.dirname(onnx_path) or "."
+    total = 0
+    for f in os.listdir(onnx_dir):
+        fp = os.path.join(onnx_dir, f)
+        if os.path.isfile(fp):
+            total += os.path.getsize(fp)
+    return total
+
+
+# ============================================================
+# C++ 推理资产导出（mel 滤波器 / positional embedding / vocab）
+# ============================================================
+
+def export_assets(model, model_name: str, asset_dir: str):
+    """生成 C++ 推理必需的三个资产文件，随 bmodel 一起部署到板卡。
+    维度全部由 model.dims 决定，base / turbo 通用：
+      - mel_<n_mels>_filters.txt：[n_mels x 201] Mel 滤波器系数，行优先展平，一行一值
+      - positional_embedding.npy：[n_text_ctx, n_text_state] decoder 位置编码（C++ 跳 128B npy 头读）
+      - vocab.txt：每行 "<id> <base64(token_bytes)>"，共 n_vocab 行
+    """
+    import base64
+    os.makedirs(asset_dir, exist_ok=True)
+    dims = model.dims
+
+    # 1. mel 滤波器（whisper 内置，支持 80/128）
+    mel_f = whisper.audio.mel_filters(torch.device("cpu"), dims.n_mels)  # [n_mels, 201]
+    mel_path = os.path.join(asset_dir, f"mel_{dims.n_mels}_filters.txt")
+    with open(mel_path, "w") as f:
+        for v in mel_f.flatten().tolist():
+            f.write(f"{v:.18e}\n")
+    print(f"  [资产] mel 滤波器 -> {mel_path}  ([{dims.n_mels}, {mel_f.shape[1]}])")
+
+    # 2. positional embedding（decoder）
+    pe = model.decoder.positional_embedding.detach().cpu().numpy().astype(np.float32)
+    pe_path = os.path.join(asset_dir, "positional_embedding.npy")
+    np.save(pe_path, pe)
+    print(f"  [资产] positional_embedding -> {pe_path}  {pe.shape}")
+
+    # 3. vocab（与 base 现有 vocab.txt 完全同格式）
+    #    - 普通 BPE token：写 base64(原始字节)
+    #    - 特殊 token（<|...|>）：写字面量字符串，C++ decode 靠 "<|" 前缀过滤掉它们
+    #      （若也 base64 编码，C++ 的 tok[0]=='<' 判断会失效，特殊符会被当正文输出）
+    tok = whisper.tokenizer.get_tokenizer(
+        model.is_multilingual, num_languages=model.num_languages)
+    enc = tok.encoding
+    id2special = {v: k for k, v in enc._special_tokens.items()}  # id -> "<|...|>"
+    vocab_path = os.path.join(asset_dir, "vocab.txt")
+    with open(vocab_path, "w") as f:
+        for i in range(dims.n_vocab):
+            if i in id2special:
+                f.write(f"{i} {id2special[i]}\n")          # 特殊 token：字面量
+            else:
+                b = enc.decode_single_token_bytes(i)
+                f.write(f"{i} {base64.b64encode(b).decode('ascii')}\n")
+    print(f"  [资产] vocab -> {vocab_path}  ({dims.n_vocab} 条)")
 
 
 # ============================================================
@@ -304,8 +404,10 @@ def verify_and_simplify(onnx_path: str):
 def main():
     parser = argparse.ArgumentParser(description="Whisper BM1684 ONNX 导出")
     parser.add_argument("--model", default="base",
-                        choices=["tiny", "base", "small", "medium"])
+                        help="whisper 模型名，如 base / small / large-v3-turbo")
     parser.add_argument("--output_dir", default="../models/onnx")
+    parser.add_argument("--asset_dir", default="../models/BM1684X",
+                        help="C++ 推理资产(mel滤波器/pos_emb/vocab)输出目录")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -316,7 +418,8 @@ def main():
     print(f"{'='*60}")
 
     print(f"\n[加载模型] whisper-{args.model} ...")
-    model = whisper.load_model(args.model)
+    # 强制 CPU：大模型(turbo)默认会上 GPU，导致 ONNX 导出时输入(CPU)与权重(cuda)类型不匹配
+    model = whisper.load_model(args.model, device="cpu")
     model.eval()
 
     # BM1684 不支持 Erf，将所有 nn.GELU 改为 tanh 近似
@@ -337,10 +440,14 @@ def main():
     dec_path = export_decoder(model, f"{prefix}_decoder.onnx")
     verify_and_simplify(dec_path)
 
+    print(f"\n[导出 C++ 推理资产] -> {args.asset_dir}")
+    export_assets(model, args.model, args.asset_dir)
+
     print(f"\n{'='*60}")
     print(f"  导出完成，共 2 个 ONNX 文件:")
     print(f"  1. whisper_{args.model}_encoder_sim.onnx")
     print(f"  2. whisper_{args.model}_decoder_sim.onnx")
+    print(f"  + 资产: mel_{dims.n_mels}_filters.txt / positional_embedding.npy / vocab.txt")
     print(f"\n  下一步: 在 Docker 容器内运行 gen_bmodel.sh 转换为 bmodel")
     print(f"{'='*60}")
 

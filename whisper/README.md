@@ -1,6 +1,9 @@
-# Whisper Base — BM1684X 移植
+# Whisper — BM1684X 移植
 
-Whisper-base 语音识别模型完整移植到 Sophon BM1684X，支持 FP32 / FP16，中英文均可识别。
+Whisper 语音识别模型完整移植到 Sophon BM1684X，中英文均可识别。
+支持 **base**（6 层，512 维）与 **large-v3-turbo**（4 层 decoder / 32 层 encoder，1280 维）两个模型，
+精度 FP32 / FP16 / W4F16。C++ 推理**运行时从 bmodel 自动读取维度**，一套代码两个模型通用
+（`init(dir, prec, model_name)` 第 3 参选 `base` / `turbo`）。
 
 ## 目录结构
 
@@ -76,6 +79,65 @@ docker run --rm \
 models/BM1684X/whisper_base_encoder_F16.bmodel
 models/BM1684X/whisper_base_decoder_F16.bmodel
 ```
+
+#### W4F16 量化（权重 int4 + 激活 F16，省内存）
+
+```bash
+docker exec sophon-tpumlir bash /workspace/whisper/python/gen_bmodel_w4f16.sh
+```
+
+实测对比（whisper-base，BM1684X 板卡，device-KV 版，5 轮平均）：
+
+| 指标 | F16 | W4F16 | 变化 |
+|------|-----|-------|------|
+| bmodel 体积 | 201M | **104M** | **省 48%** |
+| 运行时 device 峰值 | 529M | **428M** | **省 19%** |
+| decoder 每 token | 19.5ms | 17.4ms | 快 11% |
+| encoder | 47ms | 53ms | **慢 13%** |
+| 英文转录 | 基准 | 逐字一致 | 无损 |
+| 中文转录 | 基准 | 有轻微丢字 | **有损** |
+
+> 结论：W4F16 主要价值是**省内存**（bmodel −48%、device −19%）。速度不均衡——decoder 每 token 略快但 encoder 反而变慢（W4 反量化开销 > 计算节省，encoder 是计算密集型）。中文有确定性精度损失。**追速度选 device-KV 优化（3.1×），省内存才选 W4F16。**
+
+## large-v3-turbo
+
+大模型 large-v3-turbo（mel=128、n_state=1280、encoder 32 层、decoder 4 层、vocab 51866、100 种语言）也已完整上板。
+导出/编译与 base 同链路，用 turbo 专用脚本（维度不同）：
+
+```bash
+# Step 1：导出 ONNX + 资产（turbo encoder FP32 ≈2.4GB，需 WSL 内存 ≥12GB，见“踩过的坑”）
+cd whisper/python
+python export_onnx.py --model large-v3-turbo --asset_dir ../models/BM1684X_turbo
+
+# Step 2：编译 bmodel（容器内），F16 或 W4F16
+docker exec sophon-tpumlir bash /workspace/whisper/python/gen_bmodel_turbo.sh F16
+docker exec sophon-tpumlir bash /workspace/whisper/python/gen_bmodel_turbo.sh W4F16
+
+# 部署目录需含 turbo 专属资产（pos_emb/vocab 与 base 不同），bmodel + 三个资产放一起
+# 板上运行（第 5 参 turbo 选 turbo bmodel 前缀，维度自动读）
+./whisper_bm1684 models/BM1684X_turbo test.wav zh F16 turbo
+```
+
+实测对比（large-v3-turbo，BM1684X 板卡，device-KV 版，~5.6s 音频）：
+
+| 指标 | F16 | W4F16 | 变化 |
+|------|-----|-------|------|
+| encoder bmodel | 1.3G | **369M** | 省 72% |
+| decoder bmodel | 460M | **222M** | 省 52% |
+| 部署总大小 | 1.7G | **594M** | 省 65% |
+| encoder device 峰值 | 1.66G | **750M** | 省 55% |
+| decoder device 峰值 | 669M | **420M** | 省 37% |
+| decoder（整句 24 token） | 705ms | **545ms** | **快 23%** |
+| encoder | ~1.26s | ~1.28s | 持平 |
+| 端到端 | ~2.0s | **~1.9s** | 略快 |
+| 中英文转录 | 基准 | **逐字一致** | **无损** |
+
+> 结论：turbo 的 **W4F16 全面优于 F16**——bmodel 省 65%、device 省 ~50%、decoder 快 23%，且中英文**完全无损**
+> （n_state=1280 较大，per-group 量化误差被稀释，不像 base W4F16 中文会丢字）。turbo 推荐直接用 W4F16。
+> 转录质量也优于 base（识别更完整）。
+>
+> ⚠️ **turbo encoder（1.3G）编译必须加 `--disable_layer_group`**，否则 TPU-MLIR v1.28.1 的 layer_group
+> 优化 bug 会让推理时板卡 kernel panic 重启（连官方 bmrt_test 都挂）。脚本已内置。详见“踩过的坑”。
 
 ### Step 3：交叉编译 C++ 推理程序
 
@@ -218,3 +280,27 @@ pip install "$WHL" -q --no-deps 2>/dev/null || pip install "$WHL" -q
 ```bash
 bm-smi   # 输出中看 "1684X-SOC" 即为 BM1684X
 ```
+
+### 7. turbo encoder（1.3G）不加 `--disable_layer_group` → 板卡 kernel panic 重启
+
+**现象**：turbo encoder F16 推理时板卡直接挂死重启，连官方 `bmrt_test --bmodel turbo_encoder.bmodel` 单独加载推理都挂。
+
+**排查**：`model_tool --info` 显示 encoder device mem 仅 1.66G（< npu heap 3.86G）、runtime 仅 369M，**不是 OOM**。
+base encoder（46M）同样不加该参数却正常 → 区别只在规模（turbo 32 层 1280 维）。即第 3 条坑的大模型版：
+**>500MB 的大模型 encoder 也必须加 `--disable_layer_group`**（v1.28.1 的 layer_group 优化在大模型上有 bug）。
+
+**修复**：`gen_bmodel_turbo.sh` 的 encoder 与 decoder 均已加 `--disable_layer_group`。加了之后 bmrt_test 正常（encoder 1.28s），5+ 轮连续推理稳定不重启。
+
+### 8. turbo 大 ONNX 导出 OOM / scp 崩传文件静默损坏
+
+**现象 A（导出）**：turbo encoder FP32 ≈2.4GB，导出时 WSL 默认 8GB 内存被打爆，进程 Exit 137（OOM，不是超时），连带 WSL 崩溃断联。
+
+**修复 A**：Windows 用户目录建 `.wslconfig` 给 WSL ≥12GB 内存 + swap；`wsl --shutdown` 重启生效。
+`export_onnx.py` 对 >2GB 模型跳过 onnxsim（会爆 protobuf 2GB 上限）、用外部数据(external data)另存。
+
+**现象 B（部署）**：板卡崩溃期间 scp 传输的大文件会**静默损坏**（文件大小对、内容错）。
+turbo decoder 损坏 → 加载失败；positional_embedding.npy 损坏读成全 0 → decoder 输出 token 220(空格) 死循环、结果为空。
+
+**修复 B**：**每个上板文件都 `md5sum` 比对本地**，别假设 scp 成功。用 sail 跑 bmodel vs onnxruntime 数值对比
+（cos 0.99998）可证明 bmodel 本身正确，从而把问题定位到文件损坏而非模型/代码。C++ 侧 `read_vocab`/`read_mel_filters`
+现已校验读满预期条数，文件截断/损坏会直接报错而非静默产生垃圾输出。

@@ -1,0 +1,15 @@
+# 模型产物全部本地生成，不入库（保留目录占位 .gitkeep）
+models/**
+!models/**/
+!models/**/.gitkeep
+
+# bmodel 编译副产物
+*.bmodel
+*.bmodel.json
+*.bmodel.net_*.profile
+
+# C++ 编译产物
+cpp/build/
+
+# 测试生成物（脚本入库，输出不入库）
+python/test/outputs/

@@ -140,6 +140,13 @@ int read_mel_filters(const char* filename, float* data, int max_lines) {
     fclose(file);
     std::cout << "[INFO] Loaded " << line_count << " mel filter coefficients" << std::endl;
 
+    // 必须读满 max_lines，否则文件被截断/损坏，后续 matmul 会读到未初始化内存
+    if (line_count != max_lines) {
+        std::cerr << "[ERROR] mel filters: expected " << max_lines
+                  << " coeffs but read " << line_count
+                  << " (文件损坏或维度不匹配?)" << std::endl;
+        return -1;
+    }
     return 0;
 }
 
@@ -281,7 +288,7 @@ static void pad_x_mel(const std::vector<float> input,
     }
 }
 
-void audio_preprocess(audio_buffer_t* audio, float* mel_filters,
+void audio_preprocess(audio_buffer_t* audio, float* mel_filters, int n_mels,
                      std::vector<float>& x_mel) {
     int audio_length = audio->num_frames;
 
@@ -323,8 +330,8 @@ void audio_preprocess(audio_buffer_t* audio, float* mel_filters,
     fftwf_free(stfts_result_t);
 
     // Step 4: Apply mel filters
-    // mel_filters: [N_MELS x num_freqs], magnitudes: [num_freqs x (num_frames-1)]
-    int ROWS_A = N_MELS;
+    // mel_filters: [n_mels x num_freqs], magnitudes: [num_freqs x (num_frames-1)]
+    int ROWS_A = n_mels;
     int COLS_A = num_freqs;
     int COLS_B = cur_num_frames_of_stfts - 1;
 
@@ -338,23 +345,23 @@ void audio_preprocess(audio_buffer_t* audio, float* mel_filters,
     int target_cols = MAX_AUDIO_LENGTH / HOP_LENGTH;  // 1000 for 10s window
     if (COLS_B > target_cols) {
         // Truncate: compact cur_x_mel row-by-row so pad_x_mel sees a contiguous
-        // [N_MELS x target_cols] source with the correct row stride.
-        for (int r = 1; r < N_MELS; ++r) {
+        // [n_mels x target_cols] source with the correct row stride.
+        for (int r = 1; r < n_mels; ++r) {
             std::copy(cur_x_mel.begin() + r * COLS_B,
                       cur_x_mel.begin() + r * COLS_B + target_cols,
                       cur_x_mel.begin() + r * target_cols);
         }
-        cur_x_mel.resize(N_MELS * target_cols);
+        cur_x_mel.resize(n_mels * target_cols);
         std::cout << "[WARN] Audio exceeds " << (MAX_AUDIO_LENGTH / 16000)
                   << "s window, truncated from " << COLS_B
                   << " to " << target_cols << " mel frames" << std::endl;
         COLS_B = target_cols;
     }
-    x_mel.resize(N_MELS * target_cols, 0.0f);  // zero-init for short-audio padding
-    pad_x_mel(cur_x_mel, N_MELS, COLS_B, x_mel, target_cols);
+    x_mel.resize(n_mels * target_cols, 0.0f);  // zero-init for short-audio padding
+    pad_x_mel(cur_x_mel, n_mels, COLS_B, x_mel, target_cols);
 
     std::cout << "[INFO] Computed mel spectrogram: ["
-              << N_MELS << " x " << target_cols << "]" << std::endl;
+              << n_mels << " x " << target_cols << "]" << std::endl;
 
     // Debug: print first 10 mel values
     if (is_debug_enabled()) {
@@ -373,7 +380,7 @@ void audio_preprocess(audio_buffer_t* audio, float* mel_filters,
 
 // ==================== Vocabulary ====================
 
-int read_vocab(const char* filename, VocabEntry* vocab) {
+int read_vocab(const char* filename, VocabEntry* vocab, int vocab_num) {
     FILE* fp = fopen(filename, "r");
     if (fp == NULL) {
         perror("[ERROR] Error opening vocabulary file");
@@ -383,7 +390,7 @@ int read_vocab(const char* filename, VocabEntry* vocab) {
     char line[512];
     int count = 0;
 
-    while (fgets(line, sizeof(line), fp) && count < VOCAB_NUM) {
+    while (fgets(line, sizeof(line), fp) && count < vocab_num) {
         // Parse line format: "index token"
         char* space = strchr(line, ' ');
         if (space) {
@@ -404,6 +411,14 @@ int read_vocab(const char* filename, VocabEntry* vocab) {
     fclose(fp);
     std::cout << "[INFO] Loaded " << count << " vocabulary entries" << std::endl;
 
+    // 必须读满 vocab_num 条，否则 vocab.txt 被截断/损坏/与模型不匹配，
+    // 缺失的 VocabEntry 为空 token，解码时输出空串而非报错（今天踩过的坑）
+    if (count != vocab_num) {
+        std::cerr << "[ERROR] vocab: expected " << vocab_num
+                  << " entries but read " << count
+                  << " (文件损坏或与模型词表不匹配?)" << std::endl;
+        return -1;
+    }
     return 0;
 }
 
@@ -475,20 +490,4 @@ std::string base64_decode(const std::string& encoded_string) {
     }
 
     return decoded_string;
-}
-
-int argmax(float* array) {
-    int start_index = (MAX_TOKENS - 1) * 1 * VOCAB_NUM;
-    int max_index = start_index;
-    float max_value = array[start_index];
-
-    for (int i = start_index + 1; i < start_index + VOCAB_NUM; i++) {
-        if (array[i] > max_value) {
-            max_value = array[i];
-            max_index = i;
-        }
-    }
-
-    int relative_index = max_index - start_index;
-    return relative_index;
 }
