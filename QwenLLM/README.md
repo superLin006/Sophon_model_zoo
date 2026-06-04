@@ -1,4 +1,36 @@
-# BM1684X Qwen3 系列模型意图识别 Benchmark 结果
+# QwenLLM — BM1684X 意图识别
+
+Qwen 系列 LLM（Qwen2.5-3B / Qwen3-4B / 1.7B / 0.6B）移植到 Sophon BM1684X，
+用于语音助手意图识别（ASR 文本 → action + params JSON）。走 `llm_convert.py` 路线，无需 ONNX 中间步骤。
+
+## 目录结构
+
+```
+QwenLLM/
+├── README.md            # 本文档（含各模型 benchmark）
+├── benchmark_intent.py  # 板上意图识别 benchmark（-m bmodel -c config_dir）
+├── scripts/             # 编译 / 下载 / 部署脚本
+│   ├── download_qwen3_4b.sh / download_qwen3_small.sh   # 从 ModelScope 下权重
+│   ├── compile_qwen3_4b.sh / compile_qwen3_small.sh     # 容器内 llm_convert 编译
+│   └── deploy_to_board.sh                               # 同步到板卡 + 编译 demo
+├── demo/                # 板上运行代码
+│   ├── config/          # tokenizer / generation config
+│   └── python_demo/     # chat.cpp + pipeline.py（pybind）
+├── models/              # bmodel 产物（不入库，多版本）：qwen3_0.6b / qwen3_1.7b / qwen3_4b
+└── LLM-TPU/             # sophgo 官方 demo（本地克隆，不入库）
+```
+
+## 工作流
+
+```bash
+bash scripts/download_qwen3_small.sh 1.7b   # 1) 下权重 → QwenLLM/Qwen3-1.7B/
+bash scripts/compile_qwen3_small.sh  1.7b   # 2) 编译 bmodel → models/qwen3_1.7b/
+bash scripts/deploy_to_board.sh             # 3) 部署到板卡 + 编译 python_demo
+```
+
+---
+
+## Benchmark 结果
 
 > 测试日期：2026-05-23 ~ 2026-05-25
 > 板卡：BM1684X SoC 模式 (6GB DDR, 9GB DevMem)

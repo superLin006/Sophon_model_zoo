@@ -36,33 +36,30 @@ chmod -R +x scripts/
 执行下载脚本后，当前目录下的文件如下：
 
 ```bash
-├── docs
-│   └── ChatTTS_Export_Guide.md    #onnx导出和bmodel编译指南
-├── models
-|   ├── asset                      #一些不需要编译成bmodel的权重文件
-|   ├── chattts-llama_int4_1dev_1024_bm1684x.bmodel # gpt bmodel，int4精度，使用1个device，seq_len=1024，运行在bm1684x。
-|   ├── chattts-llama_int4_1dev_1024_bm1688.bmodel  # gpt bmodel，int4精度，使用1个device，seq_len=1024，运行在bm1688。
-|   ├── decoder_1-768-1024_bm1684x.bmodel           # decoder bmodel，bf16精度，输入大小为[1,768,1024]，运行在bm1684x
-|   ├── decoder_1-768-1024_bm1688.bmodel            # decoder bmodel，bf16精度，输入大小为[1,768,1024]，运行在bm1688
-|   ├── vocos_1-100-2048_bm1684x.bmodel             # vocos bmodel，bf16精度，输入大小为[1,100,2048]，运行在bm1684x
-|   └── vocos_1-100-2048_bm1688.bmodel              # vocos bmodel，bf16精度，输入大小为[1,100,2048]，运行在bm1684x
-├── python/
-|   ├── ChatTTS                     #封装好的ChatTTS模块，推理部分用sail实现。
-|   ├── README.md                   #运行指南
-|   └── test_stream.py              #流式调用示例
-|   └── test.py                     #非流式调用示例
-├── README.md                       #ChatTTS例程指南
-├── scripts                         
-│   ├── download.sh                 #下载脚本
-|   ├── gen_decoder_bmodel.sh       #decoder bmodel编译脚本
-|   ├── gen_gpt_bmodel.sh           #gpt bmodel编译脚本
-|   └── gen_vocos_bmodel.sh         #vocos bmodel编译脚本
-└── tools
-    ├── config.py                   #导出onnx需要的配置
-    ├── dvae.py                     #dvae模型结构文件
-    ├── exporter.py                 #导出脚本
-    ├── gpt.py                      #gpt模型结构文件
-    └── modeling_llama.py           #gpt里llama的模型结构文件。
+├── README.md                       # 本例程指南
+├── cpp/                            # C++ 推理（纯 bmruntime，支持流式）
+├── docs/
+│   ├── ChatTTS_Export_Guide.md     # onnx 导出和 bmodel 编译指南
+│   └── flowchart.png               # 流程图
+├── models/                         # bmodel 产物（不入库，download.sh 下载）
+|   ├── asset                       # 不需编译成 bmodel 的权重文件
+|   ├── chattts-llama_int4_1dev_1024_bm1684x.bmodel # gpt int4, seq=1024
+|   ├── decoder_1-768-1024_bm1684x.bmodel           # decoder bf16 [1,768,1024]
+|   └── vocos_1-100-2048_bm1684x.bmodel             # vocos bf16 [1,100,2048]
+├── python/                         # Python 推理（sail）
+|   ├── ChatTTS/                    # 封装好的 ChatTTS 模块
+|   ├── README.md                   # 运行指南
+|   ├── test.py                     # 非流式调用示例
+|   └── test_stream.py              # 流式调用示例
+├── scripts/                        # 下载 + bmodel 编译脚本
+│   ├── download.sh
+|   ├── gen_gpt_bmodel.sh
+|   ├── gen_decoder_bmodel.sh
+|   └── gen_vocos_bmodel.sh
+├── tools/                          # ONNX 导出（模型结构 + exporter）
+|   ├── config.py / dvae.py / gpt.py / modeling_llama.py
+|   └── exporter.py
+└── test_data/                      # 测试音频（不入库，.gitkeep 占位）
 ```
 
 

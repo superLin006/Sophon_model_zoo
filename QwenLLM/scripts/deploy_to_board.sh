@@ -9,30 +9,31 @@ BOARD_DIR="/data/sophon-llm"
 
 SSH="sshpass -p ${BOARD_PASS} ssh -o StrictHostKeyChecking=no ${BOARD_USER}@${BOARD_IP}"
 SCP="sshpass -p ${BOARD_PASS} scp -o StrictHostKeyChecking=no -r"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 脚本在 scripts/ 下，QwenLLM 根目录是上一级
+QWEN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 echo "====== 1. 创建板子目录结构 ======"
 $SSH "mkdir -p ${BOARD_DIR}/qwen3/python_demo ${BOARD_DIR}/qwen3/config"
 
-echo "====== 2. 同步 config 和 python_demo 源码 ======"
-${SCP} ${SCRIPT_DIR}/qwen3/python_demo/ ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/qwen3/python_demo/
-${SCP} ${SCRIPT_DIR}/qwen3/config/      ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/qwen3/config/
+echo "====== 2. 同步 config 和 python_demo 源码（本地 demo/）======"
+${SCP} ${QWEN_DIR}/demo/python_demo/ ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/qwen3/python_demo/
+${SCP} ${QWEN_DIR}/demo/config/      ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/qwen3/config/
 
 echo "====== 3. 同步 benchmark 脚本 ======"
 sshpass -p ${BOARD_PASS} scp -o StrictHostKeyChecking=no \
-    ${SCRIPT_DIR}/benchmark_intent.py ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/
+    ${QWEN_DIR}/benchmark_intent.py ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/
 
-echo "====== 4. 同步 bmodel 文件（大文件，需要时间）======"
-QWEN3_BMODEL=$(ls ${SCRIPT_DIR}/qwen3/qwen3_4b_seq2048/*.bmodel 2>/dev/null | head -1)
+echo "====== 4. 同步 bmodel 文件（大文件，需要时间）本地 models/ ======"
+QWEN3_BMODEL=$(ls ${QWEN_DIR}/models/qwen3_4b/*.bmodel 2>/dev/null | head -1)
 if [ -n "${QWEN3_BMODEL}" ]; then
-    echo "  -> qwen3-4b (seq2048)..."
+    echo "  -> qwen3-4b..."
     sshpass -p ${BOARD_PASS} rsync -av \
         -e "ssh -o StrictHostKeyChecking=no" \
         "${QWEN3_BMODEL}" ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/qwen3/
 fi
 
-for size_dir in qwen3_0.6b_seq2048 qwen3_1.7b_seq2048; do
-    SMALL_BMODEL=$(ls ${SCRIPT_DIR}/qwen3/${size_dir}/*.bmodel 2>/dev/null | head -1)
+for size_dir in qwen3_0.6b qwen3_1.7b; do
+    SMALL_BMODEL=$(ls ${QWEN_DIR}/models/${size_dir}/*.bmodel 2>/dev/null | head -1)
     if [ -n "${SMALL_BMODEL}" ]; then
         echo "  -> ${size_dir}..."
         sshpass -p ${BOARD_PASS} rsync -av \

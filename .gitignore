@@ -13,12 +13,11 @@
 *.bmodel
 *.npz
 *.safetensors
+# QwenLLM：HF 原始权重 + bmodel 产物（本地生成，不入库）
 QwenLLM/Qwen3-4B-AWQ/
 QwenLLM/Qwen3-0.6B/
 QwenLLM/Qwen3-1.7B/
-QwenLLM/qwen3/qwen3_4b_seq2048/
-QwenLLM/qwen3/qwen3_0.6b_seq2048/
-QwenLLM/qwen3/qwen3_1.7b_seq2048/
+QwenLLM/models/
 
 # 测试数据（用 .gitkeep 保留目录结构）
 test_data/*

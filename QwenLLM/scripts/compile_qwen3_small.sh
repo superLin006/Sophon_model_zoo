@@ -8,20 +8,21 @@
 # 注: docker /workspace 对应宿主机 /home/xh/itc_project/Sophon_model_zoo/
 
 set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 脚本在 scripts/ 下，QwenLLM 根目录是上一级
+QWEN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="${1:-all}"
 
 compile_model() {
     local label="$1"        # 0.6B | 1.7B
     local weights_name="$2" # Qwen3-0.6B | Qwen3-1.7B
-    local out_name="$3"     # qwen3_0.6b_seq2048 | qwen3_1.7b_seq2048
+    local out_name="$3"     # qwen3_0.6b | qwen3_1.7b
 
-    local weights_dir="${SCRIPT_DIR}/${weights_name}"
-    local out_dir="${SCRIPT_DIR}/qwen3/${out_name}"
+    local weights_dir="${QWEN_DIR}/${weights_name}"
+    local out_dir="${QWEN_DIR}/models/${out_name}"
 
     if [ ! -f "${weights_dir}/config.json" ]; then
         echo "[ERROR] 权重目录不存在: ${weights_dir}"
-        echo "       请先运行: bash download_qwen3_small_weights.sh ${label,,}"
+        echo "       请先运行: bash download_qwen3_small.sh ${label,,}"
         exit 1
     fi
 
@@ -47,11 +48,11 @@ compile_model() {
             -s 2048 \
             --quantize w4bf16 \
             -c bm1684x \
-            --out_dir /workspace/QwenLLM/qwen3/${out_name}
+            --out_dir /workspace/QwenLLM/models/${out_name}
 
         echo '[docker] 完成，输出文件:'
-        ls -lh /workspace/QwenLLM/qwen3/${out_name}/*.bmodel 2>/dev/null || \
-        ls -lh /workspace/QwenLLM/qwen3/${out_name}/
+        ls -lh /workspace/QwenLLM/models/${out_name}/*.bmodel 2>/dev/null || \
+        ls -lh /workspace/QwenLLM/models/${out_name}/
     "
 
     echo "[INFO] 本地 bmodel:"
@@ -60,14 +61,14 @@ compile_model() {
 
 case "${TARGET}" in
     0.6b|0.6B)
-        compile_model "0.6B" "Qwen3-0.6B" "qwen3_0.6b_seq2048"
+        compile_model "0.6B" "Qwen3-0.6B" "qwen3_0.6b"
         ;;
     1.7b|1.7B)
-        compile_model "1.7B" "Qwen3-1.7B" "qwen3_1.7b_seq2048"
+        compile_model "1.7B" "Qwen3-1.7B" "qwen3_1.7b"
         ;;
     all)
-        compile_model "0.6B" "Qwen3-0.6B" "qwen3_0.6b_seq2048"
-        compile_model "1.7B" "Qwen3-1.7B" "qwen3_1.7b_seq2048"
+        compile_model "0.6B" "Qwen3-0.6B" "qwen3_0.6b"
+        compile_model "1.7B" "Qwen3-1.7B" "qwen3_1.7b"
         echo "[INFO] 全部编译完成"
         ;;
     *)
@@ -77,4 +78,4 @@ case "${TARGET}" in
 esac
 
 echo ""
-echo "下一步: bash ${SCRIPT_DIR}/deploy_to_board.sh"
+echo "下一步: bash $(dirname "$0")/deploy_to_board.sh"

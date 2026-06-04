@@ -4,13 +4,14 @@
 # 默认下载全部
 
 set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 脚本在 scripts/ 下，权重下载到 QwenLLM 根目录（compile 脚本从那里读）
+QWEN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET="${1:-all}"
 
 download_model() {
     local model_id="$1"
     local local_name="$2"
-    local target_dir="${SCRIPT_DIR}/${local_name}"
+    local target_dir="${QWEN_DIR}/${local_name}"
 
     if [ -d "${target_dir}" ] && [ "$(ls -A ${target_dir} 2>/dev/null | wc -l)" -gt 5 ]; then
         echo "[INFO] 已存在，跳过: ${target_dir}"
@@ -21,7 +22,7 @@ download_model() {
     echo "[INFO] 下载 ${model_id} → ${target_dir}"
     conda run -n sophon-llm python3 -c "
 from modelscope import snapshot_download
-path = snapshot_download('${model_id}', cache_dir='${SCRIPT_DIR}', local_dir='${target_dir}')
+path = snapshot_download('${model_id}', cache_dir='${QWEN_DIR}', local_dir='${target_dir}')
 print('[DONE] 下载完成:', path)
 "
     echo "[INFO] 大小:"

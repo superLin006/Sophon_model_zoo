@@ -75,4 +75,4 @@ python3 test_stream.py
 
 ## 3. 程序流程图
 
-![flowchart](../pics/flowchart.png)
+![flowchart](../docs/flowchart.png)

@@ -1,7 +1,14 @@
-audio_samples/
+# 模型产物 / 部署包（本地生成，不入库）
 models/
 deploy_package/
-scripts/
+
+# 测试音频（本地准备/生成，保留 .gitkeep 占位）
+test_data/*.wav
+
+# scripts/ 下的编译中间产物（mlir / 分块 bmodel 目录），脚本本身入库
+scripts/*_mlir_files/
+scripts/*_bm1684x/
+
 *.wav
 *.log
 __pycache__/
