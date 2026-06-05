@@ -174,6 +174,7 @@ std::string WhisperInference::run(const char* audio_file, const char* language,
     // 1. 加载音频
     audio_buffer_t audio{};
     if (load_audio(audio_file, &audio) != 0) { LOGE("load_audio failed"); return ""; }
+    double audio_sec = (double)audio.num_frames / audio.sample_rate;
 
     // 2. Mel spectrogram
     std::vector<float> mel;
@@ -203,8 +204,10 @@ std::string WhisperInference::run(const char* audio_file, const char* language,
     auto dec_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count();
     auto tot_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t0).count();
 
+    double rtf = (tot_ms / 1000.0) / audio_sec;
     LOG("Encoder: " << enc_ms << "ms  Decoder: " << dec_ms << "ms  Total: " << tot_ms << "ms"
         << "  Tokens: " << tokens.size());
+    LOG("Audio: " << audio_sec << "s  RTF: " << rtf);
     LOG("Result: " << text);
     return text;
 }
