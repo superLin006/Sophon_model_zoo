@@ -104,11 +104,13 @@ scp whisper/cpp/build/whisper_bm1684 root@<board_ip>:/data/whisper/
 | 格式 | BM1684X | BM1688 | 说明 |
 |------|:-------:|:------:|------|
 | F16 / F32  | ✅ | ✅ | 无需 calibration |
-| W4F16 / W4BF16 | ✅ | ✅ | 无需 calibration，推荐 |
-| W4A8 (W4INT8) | ❌ | ✅ | BM1684X 硬件不支持，见下 |
-| INT8 | ✅ | ✅ | 需要 calibration |
+| W4F16 / W4BF16 | ✅ | ✅ | 无需 calibration，**推荐** |
+| INT8 | ⚠️ 精度崩溃 | ✅ | 需要 calibration；对 Whisper encoder 不可用，见下 |
+| W4A8 (W4INT8) | ❌ 硬件不支持 | ✅ | BM1684X 架构限制，见下 |
 
-**W4A8 实验结论**：尝试在 BM1684X 上编译 W4INT8 turbo bmodel，codegen 阶段报错 `tpu_data_type_size Assertion "0" failed`。查阅 Sophgo SDK v26.03.01 文档确认 W4A8 仅支持 BM1688，这是硬件架构限制，升级 TPU-MLIR 版本无法解决。calibration 数据（52 条）已保存在 `whisper/calib_data/`，换 BM1688 平台可直接复用。
+**INT8 实验结论**：encoder INT8 编译成功（625MB，比 F16 小 52%），速度极快（encoder 758ms，比 F16 快 40%），但**精度完全崩溃**——所有输入输出全为 `......`。原因是 Whisper encoder 共 32 层，激活值量化到 8-bit 后误差逐层累积，最终 audio_features 严重失真，decoder 无法正常解码。decoder INT8 编译直接失败（TPU-MLIR v1.28.1 `tpuc-opt` 内部 abort，compiler bug）。**INT8 不适用于 Whisper，W4F16 是 BM1684X 上的最优方案。**
+
+**W4A8 实验结论**：TPU-MLIR 中对应参数名 `W4INT8`，codegen 阶段报错 `tpu_data_type_size Assertion "0" failed`。查阅 Sophgo SDK v26.03.01 文档确认 W4A8 仅支持 BM1688，这是硬件架构限制，升级编译器版本无法解决。calibration 数据（52 条）已保存在 `whisper/calib_data/`，换 BM1688 平台可直接复用。
 
 ---
 
