@@ -15,7 +15,15 @@ BUILD_DIR="${SCRIPT_DIR}/build"
 DIST_DIR="${SCRIPT_DIR}/dist"
 
 if ! command -v aarch64-linux-gnu-g++ &>/dev/null; then
-    echo "❌ 未找到 aarch64-linux-gnu-g++，请在 cross-build docker 中运行"
+    echo "❌ 未找到 aarch64-linux-gnu-g++，请在 3_docker/cross-build docker 中运行"
+    exit 1
+fi
+
+# 依赖检查
+TOKENIZERS_DIR="${SCRIPT_DIR}/../../1_third_party/tokenizers-cpp"
+if [[ ! -f "${TOKENIZERS_DIR}/aarch64-linux/libtokenizers_cpp.a" ]]; then
+    echo "❌ 未找到 1_third_party/tokenizers-cpp/aarch64-linux/libtokenizers_cpp.a"
+    echo "   该文件已预编译入库，请确认 git clone 完整"
     exit 1
 fi
 
