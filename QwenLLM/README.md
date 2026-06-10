@@ -13,7 +13,11 @@ QwenLLM/
 │   ├── download_qwen3_4b.sh / download_qwen3_small.sh   # 从 ModelScope 下权重
 │   ├── compile_qwen3_4b.sh / compile_qwen3_small.sh     # 容器内 llm_convert 编译
 │   └── deploy_to_board.sh                               # 同步到板卡 + 编译 demo
-├── demo/                # 板上运行代码
+├── cpp/                 # 纯 C++ 推理 Demo（不依赖 Python / pybind）
+│   ├── src/             # QwenEngine.h/.cpp + main.cpp
+│   ├── CMakeLists.txt   # 引用 0_Toolkits/soc-sdk-sp4 + 1_third_party/tokenizers-cpp
+│   └── build.sh         # cross-build docker 内一键编译
+├── demo/                # Python pybind11 方案（板上 benchmark 用）
 │   ├── config/          # tokenizer / generation config
 │   └── python_demo/     # chat.cpp + pipeline.py（pybind）
 ├── models/              # bmodel 产物（不入库，多版本）：qwen3_0.6b / qwen3_1.7b / qwen3_4b
