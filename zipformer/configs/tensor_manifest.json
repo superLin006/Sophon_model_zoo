@@ -1,0 +1,1013 @@
+{
+  "schema_version": 1,
+  "model": {
+    "id": "csukuangfj/k2fsa-zipformer-bilingual-zh-en-t",
+    "short_name": "zipformer_bilingual",
+    "family": "zipformer"
+  },
+  "state_layout": {
+    "envelope": "sophon_external_batch1",
+    "external_batch": 1,
+    "inner_semantics": "MTK stack layer axis remains the leading dimension 2; it is not batch",
+    "unwrap": "state.squeeze(0) before EncoderMTK; state.unsqueeze(0) after EncoderMTK"
+  },
+  "networks": {
+    "encoder": {
+      "inputs": [
+        {
+          "name": "x",
+          "index": 0,
+          "shape": [
+            1,
+            103,
+            80
+          ],
+          "element_count": 8240,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_len_0",
+          "index": 1,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_len_1",
+          "index": 2,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_len_2",
+          "index": 3,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_len_3",
+          "index": 4,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_len_4",
+          "index": 5,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_avg_0",
+          "index": 6,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_avg_1",
+          "index": 7,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_avg_2",
+          "index": 8,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_avg_3",
+          "index": 9,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_avg_4",
+          "index": 10,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_key_0",
+          "index": 11,
+          "shape": [
+            1,
+            2,
+            128,
+            1,
+            192
+          ],
+          "element_count": 49152,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_key_1",
+          "index": 12,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            192
+          ],
+          "element_count": 24576,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_key_2",
+          "index": 13,
+          "shape": [
+            1,
+            2,
+            32,
+            1,
+            192
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_key_3",
+          "index": 14,
+          "shape": [
+            1,
+            2,
+            16,
+            1,
+            192
+          ],
+          "element_count": 6144,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_key_4",
+          "index": 15,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            192
+          ],
+          "element_count": 24576,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val_0",
+          "index": 16,
+          "shape": [
+            1,
+            2,
+            128,
+            1,
+            96
+          ],
+          "element_count": 24576,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val_1",
+          "index": 17,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            96
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val_2",
+          "index": 18,
+          "shape": [
+            1,
+            2,
+            32,
+            1,
+            96
+          ],
+          "element_count": 6144,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val_3",
+          "index": 19,
+          "shape": [
+            1,
+            2,
+            16,
+            1,
+            96
+          ],
+          "element_count": 3072,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val_4",
+          "index": 20,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            96
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val2_0",
+          "index": 21,
+          "shape": [
+            1,
+            2,
+            128,
+            1,
+            96
+          ],
+          "element_count": 24576,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val2_1",
+          "index": 22,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            96
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val2_2",
+          "index": 23,
+          "shape": [
+            1,
+            2,
+            32,
+            1,
+            96
+          ],
+          "element_count": 6144,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val2_3",
+          "index": 24,
+          "shape": [
+            1,
+            2,
+            16,
+            1,
+            96
+          ],
+          "element_count": 3072,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_val2_4",
+          "index": 25,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            96
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv1_0",
+          "index": 26,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv1_1",
+          "index": 27,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv1_2",
+          "index": 28,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv1_3",
+          "index": 29,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv1_4",
+          "index": 30,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv2_0",
+          "index": 31,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv2_1",
+          "index": 32,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv2_2",
+          "index": 33,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv2_3",
+          "index": 34,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "cached_conv2_4",
+          "index": 35,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "encoder_out",
+          "index": 0,
+          "shape": [
+            1,
+            24,
+            256
+          ],
+          "element_count": 6144,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_len_0",
+          "index": 1,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_len_1",
+          "index": 2,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_len_2",
+          "index": 3,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_len_3",
+          "index": 4,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_len_4",
+          "index": 5,
+          "shape": [
+            1,
+            2,
+            1
+          ],
+          "element_count": 2,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_avg_0",
+          "index": 6,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_avg_1",
+          "index": 7,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_avg_2",
+          "index": 8,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_avg_3",
+          "index": 9,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_avg_4",
+          "index": 10,
+          "shape": [
+            1,
+            2,
+            1,
+            256
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_key_0",
+          "index": 11,
+          "shape": [
+            1,
+            2,
+            128,
+            1,
+            192
+          ],
+          "element_count": 49152,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_key_1",
+          "index": 12,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            192
+          ],
+          "element_count": 24576,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_key_2",
+          "index": 13,
+          "shape": [
+            1,
+            2,
+            32,
+            1,
+            192
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_key_3",
+          "index": 14,
+          "shape": [
+            1,
+            2,
+            16,
+            1,
+            192
+          ],
+          "element_count": 6144,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_key_4",
+          "index": 15,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            192
+          ],
+          "element_count": 24576,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val_0",
+          "index": 16,
+          "shape": [
+            1,
+            2,
+            128,
+            1,
+            96
+          ],
+          "element_count": 24576,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val_1",
+          "index": 17,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            96
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val_2",
+          "index": 18,
+          "shape": [
+            1,
+            2,
+            32,
+            1,
+            96
+          ],
+          "element_count": 6144,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val_3",
+          "index": 19,
+          "shape": [
+            1,
+            2,
+            16,
+            1,
+            96
+          ],
+          "element_count": 3072,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val_4",
+          "index": 20,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            96
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val2_0",
+          "index": 21,
+          "shape": [
+            1,
+            2,
+            128,
+            1,
+            96
+          ],
+          "element_count": 24576,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val2_1",
+          "index": 22,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            96
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val2_2",
+          "index": 23,
+          "shape": [
+            1,
+            2,
+            32,
+            1,
+            96
+          ],
+          "element_count": 6144,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val2_3",
+          "index": 24,
+          "shape": [
+            1,
+            2,
+            16,
+            1,
+            96
+          ],
+          "element_count": 3072,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_val2_4",
+          "index": 25,
+          "shape": [
+            1,
+            2,
+            64,
+            1,
+            96
+          ],
+          "element_count": 12288,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv1_0",
+          "index": 26,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv1_1",
+          "index": 27,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv1_2",
+          "index": 28,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv1_3",
+          "index": 29,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv1_4",
+          "index": 30,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv2_0",
+          "index": 31,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv2_1",
+          "index": 32,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv2_2",
+          "index": 33,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv2_3",
+          "index": 34,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        },
+        {
+          "name": "new_cached_conv2_4",
+          "index": 35,
+          "shape": [
+            1,
+            2,
+            1,
+            256,
+            30
+          ],
+          "element_count": 15360,
+          "dtype": "float32"
+        }
+      ]
+    },
+    "decoder": {
+      "inputs": [
+        {
+          "name": "token_ids",
+          "index": 0,
+          "shape": [
+            1,
+            2
+          ],
+          "element_count": 2,
+          "dtype": "int64",
+          "runtime_dtype": "int32",
+          "notes": "ONNX Gather uses int64; BM1684X runtime lowers token IDs to int32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "decoder_out",
+          "index": 0,
+          "shape": [
+            1,
+            512
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        }
+      ]
+    },
+    "joiner": {
+      "inputs": [
+        {
+          "name": "enc_out",
+          "index": 0,
+          "shape": [
+            1,
+            256
+          ],
+          "element_count": 256,
+          "dtype": "float32"
+        },
+        {
+          "name": "dec_out",
+          "index": 1,
+          "shape": [
+            1,
+            512
+          ],
+          "element_count": 512,
+          "dtype": "float32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "logit",
+          "index": 0,
+          "shape": [
+            1,
+            6254
+          ],
+          "element_count": 6254,
+          "dtype": "float32"
+        }
+      ]
+    }
+  },
+  "frontend": {
+    "sample_rate": 16000,
+    "n_mels": 80,
+    "segment": 103,
+    "offset": 96,
+    "frame_shift_ms": 10.0,
+    "frame_length_ms": 25.0,
+    "dither": 0.0,
+    "preemphasis_coefficient": 0.97,
+    "window_type": "povey",
+    "snip_edges": false,
+    "remove_dc_offset": true,
+    "low_frequency": 20.0,
+    "high_frequency": -400.0,
+    "use_energy": false,
+    "use_log_fbank": true,
+    "use_power": true,
+    "tail_padding_seconds": 1.03
+  },
+  "decoding": {
+    "vocab_size": 6254,
+    "blank_id": 0,
+    "unk_id": 2,
+    "context_size": 2
+  }
+}

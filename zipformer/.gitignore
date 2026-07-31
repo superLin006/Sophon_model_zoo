@@ -1,0 +1,29 @@
+# Model and generated artifacts
+models/BM1684X/*.bmodel
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.mlir
+*.bmodel
+*.npz
+*.npy
+*.bin
+*.prototxt
+compiler_profile_*.txt
+*.ref_files.json
+*.layer_group_config.json
+*.layer_group_cache.json
+
+# Keep only the checked-in runtime vocabulary and regression fixtures.
+test_data/*
+!test_data/test_en.wav
+!test_data/test_zh.wav
+!test_data/golden.json
+
+# Build and Python caches
+cpp/build-host/
+cpp/build-aarch64/
+build/
+__pycache__/
+*.pyc

@@ -1,0 +1,137 @@
+{
+  "model": "csukuangfj/k2fsa-zipformer-bilingual-zh-en-t",
+  "revision": "e2382758de9a0219b4efe682b95af30b399db3b8",
+  "precision": "F16",
+  "assets": {
+    "models/tokens.txt": {
+      "bytes": 56317,
+      "sha256": "a8e0e4ec53810e433789b54a5c0134a7eaa2ffca595a6334d54c00da858841d3"
+    },
+    "models/BM1684X/zipformer_encoder_f16.bmodel": {
+      "bytes": 46583808,
+      "sha256": "dd4a83cf013bed5adbb650191f92b0c7830bfb747557dddb52c4001a2fb2c6b5"
+    },
+    "models/BM1684X/zipformer_decoder_f16.bmodel": {
+      "bytes": 11689984,
+      "sha256": "abefe84de8291ad519d752e585a9fb607160d9e2ac8c7e3e520f9dd90ae054ae"
+    },
+    "models/BM1684X/zipformer_joiner_f16.bmodel": {
+      "bytes": 12398592,
+      "sha256": "41d9f37537cb5060c4c7c51331d5be598d6e1a0e3e2285db636ce0b28b4dc8f1"
+    },
+    "test_data/test_en.wav": {
+      "bytes": 187404,
+      "sha256": "799f78ed4beb4de7ceae3a809262d4ce242394342ccd1d58cef7d49dbc2def46"
+    },
+    "test_data/test_zh.wav": {
+      "bytes": 179646,
+      "sha256": "668bf8df51a10027b84d5d8816a1ce11ae93545538dc05cfe2aa6811d399c250"
+    }
+  },
+  "samples": [
+    {
+      "name": "test_en",
+      "wav": "test_en.wav",
+      "audio": {
+        "sample_rate": 16000,
+        "channels": 1,
+        "sample_width_bytes": 2,
+        "frames": 93680
+      },
+      "features": [
+        689,
+        80
+      ],
+      "chunks": 8,
+      "tokens": [
+        172,
+        29,
+        118,
+        33,
+        311,
+        72,
+        118,
+        150,
+        37,
+        6,
+        30,
+        125,
+        29,
+        15,
+        85,
+        5,
+        37,
+        172,
+        61,
+        61,
+        85,
+        285,
+        225,
+        29,
+        29,
+        178,
+        12,
+        228,
+        265,
+        236,
+        225,
+        61,
+        104,
+        228,
+        72,
+        242,
+        148,
+        280,
+        275,
+        29,
+        30,
+        216
+      ],
+      "text": "MISTER QUILTER IS THE APOSTLE OF THE MIDDLE CLASSES AND WE ARE GLAD TO WELCOME HIS GOSPEL"
+    },
+    {
+      "name": "test_zh",
+      "wav": "test_zh.wav",
+      "audio": {
+        "sample_rate": 16000,
+        "channels": 1,
+        "sample_width_bytes": 2,
+        "frames": 89784
+      },
+      "features": [
+        664,
+        80
+      ],
+      "chunks": 7,
+      "tokens": [
+        593,
+        520,
+        661,
+        618,
+        743,
+        744,
+        837,
+        525,
+        520,
+        509,
+        571,
+        519,
+        500,
+        538,
+        521,
+        1280,
+        1165,
+        593,
+        520,
+        519,
+        1259,
+        1260,
+        972,
+        1080,
+        2415,
+        584
+      ],
+      "text": "对我做了介绍那么我想说的是大家如果对我的研究感兴趣呢"
+    }
+  ]
+}
