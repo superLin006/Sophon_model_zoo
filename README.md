@@ -8,10 +8,11 @@ Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP
 |------|------|------|------|------|
 | [Whisper](whisper/) | 语音识别（自回归，base / large-v3-turbo） | FP16 / W4F16 | base 端到端 ~1.0s；turbo ~1.9s（W4F16，中英无损） | ✅ 完成 |
 | [SenseVoice Small](sensevoice/) | 语音识别 + 情感/事件（CTC） | FP16 | RTF 0.0095 | ✅ 完成 |
+| [Zipformer](zipformer/) | 流式中英双语语音识别（Transducer） | FP16 | RTF 0.024–0.071，8/8 token-perfect vs Python Sail | ✅ 完成 |
 | [ChatTTS](chatTTS/) | 文本转语音（自回归 + DVAE + Vocos） | GPT INT4 + FP16 | RTF 0.53（非流式）/ 0.59（流式），TTFA ~980ms | ✅ 完成 |
 | [VITS-MeloTTS](vits-melo-tts-zh_en/) | 文本转语音（中英双语） | FP32 | RTF ~0.12 | ✅ 完成 |
 | [Eureka-Audio](Eureka-Audio/) | 音频指令分类（whisper encoder + Qwen3-1.7B） | W4BF16 | 准确率 ~90%，端到端 ~2.3s/条（Python·sail / C++ 均跑通） | ✅ 完成 |
-| [QwenLLM 系列](QwenLLM/) | LLM 意图识别（Qwen2.5-3B / Qwen3-4B / 1.7B / 0.6B，no_think） | W4BF16 / W4F16 | 推荐 **Qwen3-1.7B**：FTL 0.88s，TPS 29.1，E2E 1.20s，9/10 ⭐（详见 [BENCHMARK](QwenLLM/BENCHMARK_RESULTS.md)） | ✅ 完成 |
+| [QwenLLM 系列](QwenLLM/) | LLM 意图识别（Qwen3-0.6B，v95 系列） | W4BF16 / W8BF16 | v95 recall + 意图分类组合，FTL ~0.3s | ✅ 完成 |
 
 ## 项目结构
 
@@ -27,16 +28,15 @@ Sophon_model_zoo/
 ├── environment.yml           # Conda 环境（模型导出用）
 ├── whisper/                  # Whisper 移植（base + large-v3-turbo，FP16/W4F16）
 ├── sensevoice/               # SenseVoice Small 移植
+├── zipformer/                # Zipformer 流式中英双语 ASR（103/96 streaming，C++ BMRuntime CLI）
 ├── chatTTS/                  # ChatTTS 移植（纯 bmruntime C++，支持流式）
 ├── vits-melo-tts-zh_en/      # VITS-MeloTTS 中英双语移植
 ├── Eureka-Audio/             # 音频指令分类（whisper encoder + Qwen3-1.7B，Python·sail + C++）
-└── QwenLLM/                  # Qwen 系列 LLM 意图识别
-    ├── qwen3/                # Qwen3 编译/部署脚本 + bmodel 产物（0.6b / 1.7b）
+└── QwenLLM/                  # Qwen 系列 LLM 意图识别（v95 系列）
     ├── LLM-TPU/              # sophgo 官方 demo（不入库，本地克隆）
-    ├── compile_qwen3*.sh     # bmodel 编译脚本
-    ├── download_qwen3*.sh    # HF 权重下载脚本
-    ├── deploy_to_board.sh    # 部署到板卡
-    └── BENCHMARK_RESULTS.md  # 详细性能对比（4 个模型）
+    ├── scripts/              # 编译/部署/下载脚本
+    ├── cpp/                  # C++ BMRuntime 推理
+    └── demo/                 # Python 演示
 ```
 
 ## 转换流程
@@ -73,12 +73,13 @@ conda activate sophon-export
 ### 3. 移植某个模型
 
 参考各模型目录下的 `README.md`：
-- [whisper/README.md](whisper/README.md)（base + large-v3-turbo）
+- [whisper/README.md](whisper/README.md)
 - [sensevoice/README.md](sensevoice/README.md)
+- [zipformer/README.md](zipformer/README.md)（流式中英双语 Transducer）
 - [chatTTS/README.md](chatTTS/README.md)
 - [vits-melo-tts-zh_en/README.md](vits-melo-tts-zh_en/README.md)
-- [Eureka-Audio/](Eureka-Audio/)（音频指令分类）
-- [QwenLLM/BENCHMARK_RESULTS.md](QwenLLM/BENCHMARK_RESULTS.md)
+- [Eureka-Audio/](Eureka-Audio/)
+- [QwenLLM/](QwenLLM/)
 
 ## 技术要点
 
