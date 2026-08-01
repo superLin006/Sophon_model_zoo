@@ -1,0 +1,27 @@
+# 模型产物全部本地生成,不入库(保留目录占位 .gitkeep;根仓库规则已忽略 *.safetensors)
+models/**
+!models/**/
+!models/**/.gitkeep
+!models/tokens.txt
+!models/log_k.txt
+
+# TPU-MLIR 编译副产物(目录内)
+models/BM1684X/**
+!models/BM1684X/.gitkeep
+
+# bmodel 编译副产物
+*.bmodel
+*.bmodel.json
+*.bmodel.net_*.profile
+
+# C++ 编译产物
+cpp/build/
+cpp/tools/feat_dump
+
+# 测试生成物: baseline 保留入库, debug 不入库(可重新生成)
+python/test/outputs/debug/
+!python/test/outputs/baseline/
+
+# 测试数据: 覆盖仓库根规则 test_data/*,小文件入库
+!test_data/*.wav
+!test_data/trans.txt

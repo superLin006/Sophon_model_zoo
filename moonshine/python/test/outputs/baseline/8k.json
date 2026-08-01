@@ -1,0 +1,72 @@
+{
+  "file": "8k.wav",
+  "duration_s": 4.83,
+  "n_samples": 77200,
+  "input_shape": [
+    1,
+    77200
+  ],
+  "attention_mask_shape": [
+    1,
+    77200
+  ],
+  "t_enc": 242,
+  "encoder_shape": [
+    1,
+    242,
+    620
+  ],
+  "text_generate": "Yet these thoughts affected Hester Prynne less with hope than apprehension.",
+  "text_manual": "Yet these thoughts affected Hester Prynne less with hope than apprehension.",
+  "text_match": true,
+  "tokens_generate": [
+    1,
+    15175,
+    1438,
+    13133,
+    15201,
+    379,
+    4156,
+    349,
+    719,
+    29876,
+    484,
+    3109,
+    411,
+    4966,
+    1135,
+    623,
+    9003,
+    2673,
+    29889,
+    2
+  ],
+  "tokens_manual": [
+    15175,
+    1438,
+    13133,
+    15201,
+    379,
+    4156,
+    349,
+    719,
+    29876,
+    484,
+    3109,
+    411,
+    4966,
+    1135,
+    623,
+    9003,
+    2673,
+    29889,
+    2
+  ],
+  "decoder_steps": 19,
+  "generate_time_s": 0.39,
+  "decoder_loop_time_s": 0.277,
+  "max_new_tokens": 38,
+  "model": "moonshine-streaming-small",
+  "dtype": "F32",
+  "note": "MoonshineStreamingForConditionalGeneration(streaming 变体): encoder 预处理 = reshape 到 frame_len=80(5ms@16k) -> frame CMVN -> asinh(k=0.75) -> Linear(80->620)+silu -> causal conv1(k5 s2) -> causal conv2(k5 s2); T=N//80, T_enc=(T-1)//4+1; 10s(160000 samples)->T=2000,T_enc=500; 10 层 encoder 每层带 sliding window mask ([[16,4]x2,[16,0]x6,[16,4]x2]); decoder 对 encoder_hidden_states 加学习 pos_emb 并 proj 620->512"
+}

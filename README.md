@@ -8,6 +8,7 @@ Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP
 |------|------|------|------|------|
 | [Whisper](whisper/) | 语音识别（自回归，base / large-v3-turbo） | FP16 / W4F16 | base 端到端 ~1.0s；turbo ~1.9s（W4F16，中英无损） | ✅ 完成 |
 | [SenseVoice Small](sensevoice/) | 语音识别 + 情感/事件（CTC） | FP16 | RTF 0.0095 | ✅ 完成 |
+| [Moonshine](moonshine/) | 语音识别（轻量流式 ASR，streaming-small） | FP16 / FP32 | RTF 0.045（F16，6.6s 音频实测） | ✅ 完成 |
 | [Zipformer](zipformer/) | 流式中英双语语音识别（Transducer） | FP16 | RTF 0.024–0.071，8/8 token-perfect vs Python Sail | ✅ 完成 |
 | [ChatTTS](chatTTS/) | 文本转语音（自回归 + DVAE + Vocos） | GPT INT4 + FP16 | RTF 0.53（非流式）/ 0.59（流式），TTFA ~980ms | ✅ 完成 |
 | [VITS-MeloTTS](vits-melo-tts-zh_en/) | 文本转语音（中英双语） | FP32 | RTF ~0.12 | ✅ 完成 |
@@ -28,6 +29,7 @@ Sophon_model_zoo/
 ├── environment.yml           # Conda 环境（模型导出用）
 ├── whisper/                  # Whisper 移植（base + large-v3-turbo，FP16/W4F16）
 ├── sensevoice/               # SenseVoice Small 移植
+├── moonshine/                # Moonshine streaming-small 移植（轻量流式 ASR，FP16/FP32）
 ├── zipformer/                # Zipformer 流式中英双语 ASR（103/96 streaming，C++ BMRuntime CLI）
 ├── chatTTS/                  # ChatTTS 移植（纯 bmruntime C++，支持流式）
 ├── vits-melo-tts-zh_en/      # VITS-MeloTTS 中英双语移植
