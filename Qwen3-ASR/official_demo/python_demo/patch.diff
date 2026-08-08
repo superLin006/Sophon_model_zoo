@@ -1,0 +1,27 @@
+--- /mnt/data/zjw/source/llm/LLM-TPU/models/Qwen3_ASR/python_demo/pipeline.py
++++ /mnt/data/zjw/source/llm/LLM-TPU/models/Qwen3_ASR/python_demo/pipeline.py
+@@ -95,6 +95,12 @@
+         if (audio_features.shape[0] != n_times):
+             raise RuntimeError(
+                 f"Audio features shape {audio_features.shape[0]} does not match expected {n_times}")
++        
++        # DUMP AUDIO FEATURES
++        print(f"DUMPING AUDIO FEATURES: {audio_features.shape}")
++        np.ascontiguousarray(audio_features.numpy(), dtype=np.float32).tofile("audio_features.bin")
++        np.array(audio_offset_list, dtype=np.int32).tofile("audio_offsets.bin")
++
+         # do audio inference
+         self.model.forward_audio(audio_features.numpy(), np.array(audio_offset_list,
+                                                                   dtype=np.int32))
+@@ -172,6 +178,11 @@
+             print("\nResult:")
+ 
+             # Chat
++            print(f"DUMPING TOKENS: {inputs.input_ids.shape}")
++            np.ascontiguousarray(inputs.input_ids.squeeze(0).numpy(), dtype=np.int32).tofile("input_ids.bin")
++            print(f"DUMPING POSITION IDS: {position_ids.shape}")
++            np.ascontiguousarray(position_ids.numpy(), dtype=np.int32).tofile("position_ids.bin")
++
+             first_start = time.time()
+             self.model.forward_embed(inputs.input_ids.squeeze(0).tolist())
+             self.audio_inference(inputs)

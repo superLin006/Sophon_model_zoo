@@ -1,6 +1,33 @@
 # Qwen3-ASR-0.6B — BM1684X 移植
 
-[Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 的 Qwen3-asr-0.6B（30 语种 + 22 中文方言的语音识别 + 语种识别）完整移植到 Sophon BM1684X，支持 **纯 C++ bmruntime** 与 **python/sail** 两种上板推理，中英文转写与原生基线一致。
+[Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 的 Qwen3-asr-0.6B（30 语种 + 22 中文方言的语音识别 + 语种识别）完整移植到 Sophon BM1684X，中英文转写与原生基线一致。
+
+## 🏆 当前推荐：LLM-TPU 官方工具链方案（--qwen_asr）
+
+**结论：官方工具链全面优于自定义 ONNX 导出方案**（体积 -51%、内存 -49%、decode +83%），
+采用 ModelScope `Qwen/Qwen3-ASR-0.6B`（qwen_asr 包版权重，thinker_config + mrope）：
+
+```bash
+# 编译（docker sophon-tpumlir，TPU-MLIR v1.28.1）
+# 前置：pip3 install "transformers==4.57.6" "qwen-asr" "torch==2.4.1"（CPU index）
+#       权重目录不能有 .bin 文件（LlmLoad 会误当 torch 权重）
+llm_convert.py -m <qwen_asr_weights> -s 512 --max_input_length 256 \
+    --quantize w4bf16 -c bm1684x --out_dir qwen3_asr_official --qwen_asr
+
+# 上板（官方 C++ demo，板卡 python3.8 需重编 chat 模块）
+#   g++ -O2 -std=c++17 -fPIC -shared -I <pybind11_include> -I /usr/include/python3.8 \
+#       -I /opt/sophon/libsophon-current/include chat.cpp -o chat.cpython-38-aarch64-linux-gnu.so \
+#       -L /opt/sophon/libsophon-current/lib -lbmrt -lbmlib
+./qwen3_asr_demo <bmodel> <config_dir> <wav> [language]   # 官方 cpp_demo
+```
+
+**官方 bmodel 结构**（60 网络单文件）：`audio`（chunk encoder：100 mel 帧 → 13 embeds，内置）+ `embedding` + `block_i` + `block_cache_i`（**KV bf16**）+ `lm_head`。
+
+**实测性能**（test_zh 5.6s）：audio 0.04s + prefill 0.06s + decode 64.5 tok/s → 端到端 ~0.5s（**RTF ~0.09**），FTL 97ms。
+
+> 早期自定义方案（5.14 权重 + ONNX 导出 + 双 encoder bmodel）保留在 `compile/`、`cpp/` 作为备选与参考。
+
+
 
 ## 模型结构（探索结论）
 
@@ -100,7 +127,8 @@ bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
 | FFT mel + seq2048 | 0.09s | 0.08s | 2.57s | 8.1 tok/s | 5.33s | 0.95 |
 | FFT mel + seq1024 + 基础 prefill | 0.10s | 0.08s | 1.02s | 14.1 tok/s | 2.68s | 0.48 |
 | FFTW mel + seq512 + prefill 优化 | 0.09s | 0.08s | 0.17s | 23.0 tok/s | 1.26s | 0.23 |
-| **FFTW mel + seq256（当前推荐）** | **0.09s** | **0.08s** | **0.08s** | **35.3 tok/s** | **0.85s（zh）/ 0.98s（en）** | **0.15** |
+| **FFTW mel + seq256（自定义方案）** | 0.09s | 0.08s | 0.08s | 35.3 tok/s | 0.85s | 0.15 |
+| **官方工具链（当前推荐，--qwen_asr）** | 0.09s | **0.04s** | **0.06s** | **64.5 tok/s** | **~0.5s** | **~0.09** |
 
 **优化历程**
 1. **mel 提速 57 倍**（5.15s → 0.09s）：朴素 DFT → FFT（最终用 **FFTW3**，1_third_party 现成库，chatTTS 同款）
@@ -121,7 +149,7 @@ bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
 | SenseVoice Small F16 | 0.0094 | 53ms | CTC 非自回归，最快 |
 | Moonshine streaming-small | 0.045 | 296ms | 轻量英文流式 |
 | Whisper turbo W4F16 | 0.343 | 2.4s | 多语言，自回归 |
-| **Qwen3-ASR-0.6B（本移植）** | **0.15** | **0.85s** | LLM 类 ASR，30 语种 + 22 方言 + 语种识别，能力最强且速度 2 倍于 Whisper turbo |
+| **Qwen3-ASR-0.6B（本移植）** | **0.09** | **~0.5s** | LLM 类 ASR，30 语种 + 22 方言 + 语种识别（官方工具链，FTL 97ms） |
 
 ## 关键经验与坑
 

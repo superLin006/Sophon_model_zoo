@@ -13,3 +13,4 @@ cpp/build/
 # Python
 __pycache__/
 *.pyc
+models_qwenasr/
