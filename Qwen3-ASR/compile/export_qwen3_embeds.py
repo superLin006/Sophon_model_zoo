@@ -165,8 +165,8 @@ class Block(nn.Module):
         )
         # KV 内部 layout [1,N_KV,SEQ,HEAD] → 对外 [1,SEQ,N_KV,HEAD]（单 token 连续，便于 decode 偏移）
         # KV 输出 F16（KV 量化：传输/存储减半，精度影响小）
-        past_k = cache._k.transpose(1, 2).contiguous().half()  # [1,SEQ,N_KV,HEAD] f16
-        past_v = cache._v.transpose(1, 2).contiguous().half()
+        past_k = cache._k.transpose(1, 2).contiguous().float()  # [1,SEQ,N_KV,HEAD] f32（KV bf16 hack 精度损坏已放弃）
+        past_v = cache._v.transpose(1, 2).contiguous().float()
         return out.float(), past_k, past_v
 
 
@@ -194,8 +194,8 @@ class BlockCache(nn.Module):
             position_embeddings=(cos, sin),
         )
         # 取最后 token 的新 KV [1,N_KV,1,HEAD] → 对外 [1,1,N_KV,HEAD]（F16 输出）
-        new_k = cache._k[:, :, -1:, :].transpose(1, 2).contiguous().half()  # [1,1,N_KV,HEAD] f16
-        new_v = cache._v[:, :, -1:, :].transpose(1, 2).contiguous().half()
+        new_k = cache._k[:, :, -1:, :].transpose(1, 2).contiguous().float()  # [1,1,N_KV,HEAD] bf16
+        new_v = cache._v[:, :, -1:, :].transpose(1, 2).contiguous().float()
         return out.float(), new_k, new_v
 
 
@@ -270,8 +270,10 @@ def convert_block_cache(i):
     hidden    = torch.randn(1, 1, HIDDEN_SIZE)
     pos_ids   = torch.tensor([[0]], dtype=torch.long)
     attn_mask = torch.zeros(1, 1, 1, SEQ_LENGTH + 1)
-    past_k    = torch.randn(1, SEQ_LENGTH, NUM_KV_HEADS, HEAD_DIM)
-    past_v    = torch.randn(1, SEQ_LENGTH, NUM_KV_HEADS, HEAD_DIM)
+    # KV 输入 dummy 用 bf16（ONNX 输入声明 bf16——BM1684X 原生类型，TPU-MLIR 可能保留；
+    # f16 会被升回 f32，bf16 值得一试）
+    past_k    = torch.randn(1, SEQ_LENGTH, NUM_KV_HEADS, HEAD_DIM, )
+    past_v    = torch.randn(1, SEQ_LENGTH, NUM_KV_HEADS, HEAD_DIM, )
     torch.onnx.export(
         m, (hidden, pos_ids, attn_mask, past_k, past_v),
         f'{folder}/cache/block_cache_{i}.onnx',

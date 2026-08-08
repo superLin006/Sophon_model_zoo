@@ -2,30 +2,41 @@
 
 [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 的 Qwen3-asr-0.6B（30 语种 + 22 中文方言的语音识别 + 语种识别）完整移植到 Sophon BM1684X，中英文转写与原生基线一致。
 
-## 🏆 当前推荐：LLM-TPU 官方工具链方案（--qwen_asr）
+## 🏆 当前推荐：HF 标准权重 + llm_convert 单 bmodel 方案
 
-**结论：官方工具链全面优于自定义 ONNX 导出方案**（体积 -51%、内存 -49%、decode +83%），
-采用 ModelScope `Qwen/Qwen3-ASR-0.6B`（qwen_asr 包版权重，thinker_config + mrope）：
+**结论：HF transformers 5.14 的 Qwen3ASR 权重（language_model 重命名为标准 Qwen3）直接走
+LLM-TPU 官方 `llm_convert.py` 标准 Qwen3 转换**，比官方 `--qwen_asr` 方案（qwen_asr 包版权重，
+thinker_config + mrope，架构不通用）更通用：**权重即 HF 原版，工具链即官方**。
+
+**两个关键点（踩坑总结）**：
+1. **必须 `--quantize w4bf16 -g 64`**（group 64）：默认 group 128 的 w4bf16 量化误差经 28 层
+   指数放大（单层 ~0.05 → layer1 差 2.0 → logits 翻转，首 token "language" 变垃圾），
+   group 64 误差减半后精度恢复；w8bf16 也可（体积 +210MB）
+2. **KV bf16 是 llm_convert 标准行为**（block_cache 的 history_k/v 即 bf16），无需 hack
 
 ```bash
-# 编译（docker sophon-tpumlir，TPU-MLIR v1.28.1）
-# 前置：pip3 install "transformers==4.57.6" "qwen-asr" "torch==2.4.1"（CPU index）
-#       权重目录不能有 .bin 文件（LlmLoad 会误当 torch 权重）
-llm_convert.py -m <qwen_asr_weights> -s 512 --max_input_length 256 \
-    --quantize w4bf16 -c bm1684x --out_dir qwen3_asr_official --qwen_asr
-
-# 上板（官方 C++ demo，板卡 python3.8 需重编 chat 模块）
-#   g++ -O2 -std=c++17 -fPIC -shared -I <pybind11_include> -I /usr/include/python3.8 \
-#       -I /opt/sophon/libsophon-current/include chat.cpp -o chat.cpython-38-aarch64-linux-gnu.so \
-#       -L /opt/sophon/libsophon-current/lib -lbmrt -lbmlib
-./qwen3_asr_demo <bmodel> <config_dir> <wav> [language]   # 官方 cpp_demo
+# 编译（docker sophon-tpumlir，TPU-MLIR v1.28.1；容器内需 torch 2.4.1 + transformers 4.57.6）
+llm_convert.py -m models_llm_std -s 256 --quantize w4bf16 -g 64 -c bm1684x \
+    --out_dir qwen3_asr_std_w4g64
+# → qwen3_asr_std_w4g64/models_llm_std_w4bf16_seq256_bm1684x_1dev_static_*.bmodel（536MB）
+# encoder（ONNX 导出 + F16 + 必加 --disable_layer_group）：qwen3_asr_encoder_F16.bmodel（642MB）
 ```
 
-**官方 bmodel 结构**（60 网络单文件）：`audio`（chunk encoder：100 mel 帧 → 13 embeds，内置）+ `embedding` + `block_i` + `block_cache_i`（**KV bf16**）+ `lm_head`。
+**上板**（纯 bmrt C++，`cpp/`）：
+```bash
+./qwen3_asr_bm1684x --encoder_bmodel models/BM1684X/qwen3_asr_encoder_F16.bmodel \
+    --qwen3_bmodel models/BM1684X/qwen3_asr_llm_std_w4g64_seq256.bmodel \
+    --model_dir . --audio test_data/test_zh.wav          # 离线
+... --stream --stream_encoder models/BM1684X/qwen3_asr_encoder_w500_F16.bmodel \
+    --audio test_data/test_zh.wav                        # 流式（1s 块 + 中间修订 + 定稿）
+```
 
-**实测性能**（test_zh 5.6s）：audio 0.04s + prefill 0.06s + decode 64.5 tok/s → 端到端 ~0.5s（**RTF ~0.09**），FTL 97ms。
+**实测**（test_zh 5.6s）：端到端 **0.54s（RTF 0.10）**，decode 54.9 tok/s，内存 3.8GB（LLM 3.3G + encoder 0.5G）。
+输出 `language Chinese<asr_text>转写`（自动语言识别，无需手动指定）。中英文转写与原生一致。
 
-> 早期自定义方案（5.14 权重 + ONNX 导出 + 双 encoder bmodel）保留在 `compile/`、`cpp/` 作为备选与参考。
+> 备选：官方 `--qwen_asr` 方案（`qwen3_asr_official_w4bf16_seq512_bm1684x.bmodel`，896MB 单文件，
+> 64.2 tok/s，内存 2.66GB）仍可用，但权重非 HF 原版（qwen_asr 包），不通用。
+> 早期 ONNX 导出方案保留在 `compile/` 作为参考。
 
 
 
@@ -67,9 +78,12 @@ Qwen3-ASR/
 │   └── src/  (main / asr_engine / qwen_mel / tokenizer)
 ├── models/                      # 权重（不入库）+ 编译好的 bmodel
 │   ├── BM1684X/
-│   │   ├── qwen3_asr_encoder_F16.bmodel           # 363M
-│   │   └── qwen3_asr_llm_w4bf16_seq256_bm1684x.bmodel  # 1.1G（推荐：decode 35 tok/s，≤8s 音频）
+│   │   ├── qwen3_asr_encoder_F16.bmodel           # 642M（推荐 encoder，F16 + --disable_layer_group）
+│   │   ├── qwen3_asr_llm_std_w4g64_seq256.bmodel  # 536M（推荐 LLM：标准 Qwen3 w4bf16 group64，KV bf16）
+│   │   ├── qwen3_asr_encoder_3000_F16.bmodel      # 363M（备选 encoder）
+│   │   └── qwen3_asr_official_w4bf16_seq512_bm1684x.bmodel  # 896M（官方 --qwen_asr 备选）
 │   ├── prefix_embeds.bin / suffix_embeds.bin / mel_filters.npz / tokenizer.json
+├── qwen3_asr_std_w4g64/        # llm_convert 编译目录（model.log 可查网络定义）
 ├── test_data/                   # 测试音频（16k mono）
 └── deploy_to_board.sh           # 一键部署 + 测试
 ```
@@ -104,7 +118,7 @@ bash cpp/build.sh                # sophon-cross-build 容器内编译
 bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
 # 板上：
 ./qwen3_asr_bm1684x --encoder_bmodel models/BM1684X/qwen3_asr_encoder_F16.bmodel \
-    --qwen3_bmodel models/BM1684X/qwen3_asr_llm_w4bf16_seq256_bm1684x.bmodel \
+    --qwen3_bmodel models/BM1684X/qwen3_asr_llm_std_w4g64_seq256.bmodel \
     --model_dir . --audio test_data/test_zh.wav
 ```
 
@@ -114,10 +128,10 @@ bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
 
 | 音频 | 原生 transformers (CPU) | python/sail 上板 | C++ bmrt 上板 |
 |------|------------------------|------------------|---------------|
-| test_zh (5.6s) | `language Chinese<asr_text>对我做了介绍啊。那么我想说的是呢，大家如果对我的研究感兴趣呢。` | `language Chinese<asr_text>对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢。` | `language Chinese对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢。` |
-| test_en (5.9s) | `language English<asr_text>Mr. Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.` | 同左（逐字一致） | `language EnglishMr. Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.`（`<asr_text>` 被 C++ tokenizer 跳过） |
+| test_zh (5.6s) | `language Chinese<asr_text>对我做了介绍啊。那么我想说的是呢，大家如果对我的研究感兴趣呢。` | `language Chinese<asr_text>对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢。` | `language Chinese<asr_text>对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢。` |
+| test_en (5.9s) | `language English<asr_text>Mr. Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.` | 同左（逐字一致） | `language English<asr_text>Mr. Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.` |
 
-语种识别 Chinese/English 全部正确；转写仅 w4bf16 量化导致个别标点差异（原生"啊。" vs 上板"啊，"）。
+语种识别 Chinese/English 全部正确（自动识别，无需手动指定语言）；转写仅 w4bf16(g64) 量化导致个别标点差异（原生"啊。" vs 上板"啊，"），语义一致。
 
 ### 性能（C++ 版，板上实测，test_zh 5.6s / test_en 5.9s）
 
@@ -128,7 +142,8 @@ bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
 | FFT mel + seq1024 + 基础 prefill | 0.10s | 0.08s | 1.02s | 14.1 tok/s | 2.68s | 0.48 |
 | FFTW mel + seq512 + prefill 优化 | 0.09s | 0.08s | 0.17s | 23.0 tok/s | 1.26s | 0.23 |
 | **FFTW mel + seq256（自定义方案）** | 0.09s | 0.08s | 0.08s | 35.3 tok/s | 0.85s | 0.15 |
-| **官方工具链（当前推荐，--qwen_asr）** | 0.09s | **0.04s** | **0.06s** | **64.5 tok/s** | **~0.5s** | **~0.09** |
+| **官方工具链（--qwen_asr）** | 0.09s | **0.04s** | **0.06s** | **64.5 tok/s** | **~0.5s** | **~0.09** |
+| **HF 标准 + w4bf16(g64)（当前推荐）** | 0.09s | 0.08s | 0.06s | 54.9 tok/s | **0.54s** | **0.10** |
 
 **优化历程**
 1. **mel 提速 57 倍**（5.15s → 0.09s）：朴素 DFT → FFT（最终用 **FFTW3**，1_third_party 现成库，chatTTS 同款）
@@ -149,7 +164,7 @@ bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
 | SenseVoice Small F16 | 0.0094 | 53ms | CTC 非自回归，最快 |
 | Moonshine streaming-small | 0.045 | 296ms | 轻量英文流式 |
 | Whisper turbo W4F16 | 0.343 | 2.4s | 多语言，自回归 |
-| **Qwen3-ASR-0.6B（本移植）** | **0.09** | **~0.5s** | LLM 类 ASR，30 语种 + 22 方言 + 语种识别（官方工具链，FTL 97ms） |
+| **Qwen3-ASR-0.6B（本移植）** | **0.10** | **0.54s** | LLM 类 ASR，30 语种 + 22 方言 + 语种识别（HF 标准权重 + llm_convert w4bf16 g64，KV bf16） |
 
 ## 关键经验与坑
 
@@ -172,6 +187,18 @@ bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
    但 **不要直接操作 `stages[0].input_mems`**（真实数据下会卡死板卡，Eureka 同款教训）
 9. **decode mask**：mask 长度 SEQ+1，0..pos-1 可见、pos..SEQ-1 屏蔽无效槽位、
    **SEQ 位（本次新 key）保持 0 可见**；position_id = token_length（修正 Eureka 的 off-by-one）
+10. **bmrt_launch_tensor_ex 是异步的**：最后两个参数是 user_mem/user_stmode（不是 is_sync！），
+    **每层 launch 后必须 bm_thread_sync**，否则读到 TPU 输出缓冲初始 0x7fff（bf16 NaN）或残留 → 输出垃圾；
+    层间 d2d（异步 DMA）后、再 launch 前也要 sync
+11. **层间 d2d 必须直接写到下一层 in0**（`net_blocks_[i+1]->input_mems[0]`，QwenEngine 同款）；
+    写到中转 buffer 不会生效（下一层读自己的 in0 是未初始化残留）→ layer1+ 全错
+12. **各层 pos/mask 输入共享同一块 input_mem**（addr mode 1 下地址相同，已验证），只传一次即可；
+    block 输入顺序 input_states(bf16)/position_ids(int32)/attention_mask(bf16)
+13. **w4bf16 必须 `-g 64`**（llm_convert 默认 group 128）：0.6B 模型 4bit 量化误差（单层 ~0.05）
+    经 28 层 attention/FFN 指数放大（layer1 就差 2.0）→ logits 翻转首 token；
+    group 64 误差减半后精度恢复；w8bf16 也可（+210MB）。先本地噪声模拟验证量化方案再编译
+14. **位置 0 输出爆炸**（hidden 值 5376+）：causal mask 下位置 0 只看自己，是模型固有行为
+    （HF 原生同样），不影响生成（lm_head 用最后一个 token）
 10. **优先用 1_third_party 现成库**：tokenizer 用 tokenizers-cpp（QwenLLM 同款，
     C API `tokenizers_decode` 支持 skip_special_token，需同时链接 libtokenizers_cpp.a + libtokenizers_c.a）；
     FFT 可考虑 kissfft/FFTW（aarch64 静态库）——本项目手写 radix-2 FFT 已达标（mel 0.1s）未替换
@@ -183,23 +210,22 @@ bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
 ```bash
 # 板上：按 2s 块喂音频（2s 更新的处理耗时 ~1.7s ≤ 2s → 实时）
 ./qwen3_asr_bm1684x --encoder_bmodel models/BM1684X/qwen3_asr_encoder_F16.bmodel \
-    --qwen3_bmodel models/BM1684X/qwen3_asr_llm_w4bf16_seq256_bm1684x.bmodel \
+    --qwen3_bmodel models/BM1684X/qwen3_asr_llm_std_w4g64_seq256.bmodel \
     --model_dir . --stream \
     --stream_encoder models/BM1684X/qwen3_asr_encoder_w500_F16.bmodel \
     --audio test_data/test_zh.wav
 ```
 
-实测（test_zh 5.6s，1s 块 + seq256 + 官方 32 token + mel 增量）：
+实测（test_zh 5.6s，1s 块 + w4g64 LLM + mel 增量）：
 ```
-[ 1.1s] !!!!!...   (proc 1.04s | RTF 1.04)   ← 早期块满 32 token（语义未完整，未定稿可修订）
-[ 2.1s] !!!!!...   (proc 1.04s | RTF 1.04)
-[ 2.9s] language Chinese<asr_text>对我做了介绍啊。那么...   (proc 0.72s | RTF 0.72)   ← EOS 早停，消化积压
-[Final] language Chinese<asr_text>对我做了介绍啊，那么...  ← 定稿与基线一致
+[ 0.2s] language=None   (audio 3.0s | proc 0.13s | RTF 0.13)   ← 语言识别先行
+[ 0.6s] language Chinese<asr_text>还有的功能键，还有的功能键。   (audio 4.0s | proc 0.36s | RTF 0.36)  ← 中间结果（可修订）
+[ 1.1s] language Chinese<asr_text>对我做了介绍啊。那么，我想说的是呢...   (audio 5.0s | proc 0.49s | RTF 0.49)
+[Final] language Chinese<asr_text>对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢。  ← 定稿与离线一致
 ```
 
-**实时性实测（官方配置：1s 块 + 32 token）**：**平均 RTF 0.64（zh）/ 0.65（en）< 1 实时**——
-早期块（语义未完整）满 32 token 略超（RTF 1.04），后续块 EOS 早停快（0.72-0.84s）消化积压，
-流水线稳态实时（真实流式无累积延迟）。mel 增量：只算新帧 FFT + 全局重裁剪（长音频收益大）。
+**实时性实测（1s 块）**：每块处理 0.03-0.49s，**RTF 0.03-0.80 < 1 全程实时**（中间结果随音频
+增长修订，官方同款"延迟修正"行为）。mel 增量：只算新帧 FFT + 全局重裁剪（长音频收益大）。
 
 **机制**（对齐官方）：
 - 音频按 chunk 累积（100 mel 帧 = 1s），update 时用**窗口 encoder（500 帧 = 5s，`qwen3_asr_encoder_w500_F16.bmodel`）**重编码最近 5s（跨 chunk 上下文 + 未固化修正）

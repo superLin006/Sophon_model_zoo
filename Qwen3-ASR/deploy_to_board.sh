@@ -17,7 +17,7 @@ echo "=== Creating remote directory ==="
 ${SSH} "mkdir -p ${BOARD_DIR}/models/BM1684X ${BOARD_DIR}/python ${BOARD_DIR}/test_data"
 
 echo "=== Uploading bmodels ==="
-${SCP} ${REPO_ROOT}/models/BM1684X/qwen3_asr_llm_w4bf16_seq256_bm1684x.bmodel \
+${SCP} ${REPO_ROOT}/models/BM1684X/qwen3_asr_llm_std_w4g64_seq256.bmodel \
        ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/models/BM1684X/
 ${SCP} ${REPO_ROOT}/models/BM1684X/qwen3_asr_encoder_F16.bmodel \
        ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/models/BM1684X/
@@ -53,7 +53,7 @@ if [[ "$1" == "--test" ]]; then
     echo "=== Running test on board ==="
     ${SSH} "cd ${BOARD_DIR}/python && python3 infer_board.py \
         --encoder models/BM1684X/qwen3_asr_encoder_F16.bmodel \
-        --qwen3   models/BM1684X/qwen3_asr_llm_w4bf16_seq1024_bm1684x.bmodel \
+        --qwen3   models/BM1684X/qwen3_asr_llm_std_w4g64_seq256.bmodel \
         --model_dir .. --audio ../test_data/test_zh.wav"
 fi
 
@@ -62,5 +62,5 @@ echo "Done! To run manually on board:"
 echo "  ssh root@${BOARD_IP}  (pass: 1)"
 echo "  cd /data/qwen3_asr/python"
 echo "  python3 infer_board.py --encoder ../models/BM1684X/qwen3_asr_encoder_F16.bmodel \\"
-echo "      --qwen3 ../models/BM1684X/qwen3_asr_llm_w4bf16_seq1024_bm1684x.bmodel \\"
+echo "      --qwen3 ../models/BM1684X/qwen3_asr_llm_std_w4g64_seq256.bmodel \\"
 echo "      --model_dir .. --audio ../test_data/test_zh.wav"

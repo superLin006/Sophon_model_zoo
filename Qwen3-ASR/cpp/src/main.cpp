@@ -40,7 +40,7 @@ static void print_usage(const char* prog) {
 }
 
 int main(int argc, char** argv) {
-    std::string enc_path, qwen_path, model_dir, audio, audio_dir, stream_enc;
+    std::string enc_path, qwen_path, model_dir, audio, audio_dir, stream_enc, text_ids;
     int max_new_tokens = 256, device = 0;
     bool stream_mode = false;
 
@@ -54,10 +54,11 @@ int main(int argc, char** argv) {
         {"device",          required_argument, 0, 'v'},
         {"stream",          no_argument,       0, 's'},
         {"stream_encoder",  required_argument, 0, 'w'},
+        {"text",            required_argument, 0, 't'},
         {0, 0, 0, 0}
     };
     int c;
-    while ((c = getopt_long(argc, argv, "e:q:m:a:d:n:v:sw:", long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "e:q:m:a:d:n:v:sw:t:", long_opts, nullptr)) != -1) {
         switch (c) {
             case 'e': enc_path = optarg; break;
             case 'q': qwen_path = optarg; break;
@@ -68,11 +69,12 @@ int main(int argc, char** argv) {
             case 'v': device = atoi(optarg); break;
             case 's': stream_mode = true; break;
             case 'w': stream_enc = optarg; break;
+            case 't': text_ids = optarg; break;
             default: print_usage(argv[0]); return 1;
         }
     }
     if (enc_path.empty() || qwen_path.empty() || model_dir.empty() ||
-        (audio.empty() && audio_dir.empty())) {
+        (audio.empty() && audio_dir.empty() && text_ids.empty())) {
         print_usage(argv[0]);
         return 1;
     }
@@ -81,6 +83,24 @@ int main(int argc, char** argv) {
     if (!pipe.init(enc_path, qwen_path, model_dir, device)) {
         fprintf(stderr, "[main] init failed\n");
         return 1;
+    }
+
+    // ── 纯文本模式（调试）：--text "1 2 3 4 5"（空格分隔 token id）──
+    if (!text_ids.empty()) {
+        std::vector<int> ids;
+        size_t p = 0;
+        while (p < text_ids.size()) {
+            while (p < text_ids.size() && text_ids[p] == ' ') p++;
+            size_t q = p;
+            while (q < text_ids.size() && text_ids[q] != ' ') q++;
+            if (q > p) ids.push_back(atoi(text_ids.substr(p, q - p).c_str()));
+            p = q;
+        }
+        printf("[Text] input_ids=%zu tokens\n", ids.size());
+        std::string out = pipe.text_generate(ids, max_new_tokens);
+        printf("[Output] %s\n", out.c_str());
+        pipe.deinit();
+        return 0;
     }
 
     // ── 流式模式：按 1s（16000 samples）块喂音频，打印中间结果，最后定稿 ──

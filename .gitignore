@@ -60,3 +60,7 @@ results/
 # OS
 .DS_Store
 Thumbs.db
+
+# Qwen3-ASR：HF 标准权重目录（重命名版）+ llm_convert 编译目录（bmodel 已忽略）
+Qwen3-ASR/models_llm_std/
+Qwen3-ASR/qwen3_asr_std*/

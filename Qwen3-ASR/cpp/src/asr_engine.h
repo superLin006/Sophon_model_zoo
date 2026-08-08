@@ -55,11 +55,14 @@ public:
     bool init(bm_handle_t handle, const std::string& bmodel_path);
     void deinit();
 
-    // prefill：embeds [1, S, H]（prefix + audio + suffix 拼好，尾部补零）→ 首 token
-    int forward_first(const std::vector<float>& embeds_f32, int tlen);
+    // prefill：input_ids（含 audio 占位 token）+ audio embeds → 首 token
+    // 流程：embedding 网络（token ids → 文本 embeds）→ 替换 audio 段 → block 循环
+    int forward_first(const std::vector<int>& input_ids, int tlen,
+                      const std::vector<float>& audio_embeds, int audio_start);
     // decode：上一步 token → 下一步 token
     int forward_next();
     void clear_kv();
+
 
     int token_length  = 0;
     int SEQLEN        = 0;
@@ -72,6 +75,7 @@ private:
     bm_handle_t handle_ = nullptr;
     void* p_bmrt_ = nullptr;
 
+    const bm_net_info_t* net_embed_        = nullptr;  // prefill: token ids → embeds（标准 Qwen3 bmodel）
     const bm_net_info_t* net_embed_cache_ = nullptr;
     const bm_net_info_t* net_lm_          = nullptr;
     const bm_net_info_t* net_greedy_head_ = nullptr;
@@ -104,9 +108,12 @@ private:
     bm_device_mem_t pre_v_;
     bool pre_io_ready_ = false;
 
-    float mask_value_f32_ = -1e9f;
+    uint16_t mask_bf16_ = 0xC61C;   // attention mask -inf 值（bf16）
     int cur_token_ = 0;
     bool inited_ = false;
+
+    // hidden f32 → bf16 → lm_head → argmax（标准 Qwen3 bmodel 全 bf16 链）
+    int lm_head_argmax(const float* hidden_f32);
 };
 
 // ── AsrPipeline ───────────────────────────────────────────────────────────────
@@ -120,6 +127,9 @@ public:
     // 单音频转写：返回 "language <NAME><asr_text>..." 原始文本
     // 失败返回空字符串
     std::string transcribe(const std::string& wav_path, int max_new_tokens = 256);
+
+    // 纯文本生成（调试用：绕过 encoder/audio，直接验证 LLM 链路）
+    std::string text_generate(const std::vector<int>& input_ids, int max_new_tokens = 32);
 
     // ── 流式推理（对齐官方：1s chunk + 5s 重编码窗口）────────────────────────
     bool init_stream(const std::string& encoder_w500_path);  // 加载窗口版 encoder（500 mel 帧）
@@ -157,12 +167,17 @@ private:
 
     std::vector<float> prefix_embeds_;   // [plen, 1024]
     std::vector<float> suffix_embeds_;   // [slen, 1024]
+    std::vector<int>   prefix_ids_;      // prefix token ids（audio_start 前）
+    std::vector<int>   suffix_ids_;      // suffix token ids（audio_end 后）
     int plen_ = 0, slen_ = 0;
     bool loaded_ = false;
 
     // 构造 prefill 输入 embeds（prefix + audio + suffix，[1,S,H] 尾部补零）
     bool build_inputs_embeds(const std::vector<float>& audio_embeds, int alen,
                              std::vector<float>& embeds, int& tlen) const;
+    // 构造 prefill 输入 input_ids（prefix_ids + audio_pad×alen + suffix_ids，S 尾部补 0）
+    // 返回 audio 段起始位置（= plen_）
+    int build_input_ids(int alen, std::vector<int>& ids_out, int& tlen) const;
 };
 
 }  // namespace asr

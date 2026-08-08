@@ -120,8 +120,7 @@ Qwen3Bmodel::~Qwen3Bmodel() { deinit(); }
 
 void Qwen3Bmodel::deinit() {
     if (!inited_) return;
-    for (auto& m : past_key_dev_)   bm_free_device(handle_, m);
-    for (auto& m : past_value_dev_) bm_free_device(handle_, m);
+    // past_key_dev_/past_value_dev_ 是网络预分配 mem（addr mode 1），不能 free
     past_key_dev_.clear(); past_value_dev_.clear();
     if (dec_io_ready_) {
         bm_free_device(handle_, dec_hidden_);  bm_free_device(handle_, dec_pos_);
@@ -148,6 +147,7 @@ void Qwen3Bmodel::init_by_names() {
             if (strcmp(n, names[i]) == 0) return true;
         return false;
     };
+    net_embed_        = bmrt_get_network_info(p_bmrt_, "embedding");
     net_embed_cache_  = bmrt_get_network_info(p_bmrt_, "embedding_cache");
     net_lm_           = bmrt_get_network_info(p_bmrt_, "lm_head");
     if (find("greedy_head"))
@@ -189,11 +189,14 @@ bool Qwen3Bmodel::init(bm_handle_t handle, const std::string& path) {
     int kv_bytes_per_elem = (kv_dtype == BM_FLOAT32) ? 4 : 2;
     kv_layer_bytes_ = (size_t)SEQLEN * kv_per_token_ * kv_bytes_per_elem;
     kv_token_bytes_ = (size_t)kv_per_token_ * kv_bytes_per_elem;
+    // mask -inf 值按输入 dtype：fp16=0xF0E2，bf16=0xC61C（QwenEngine 规则，混用会致屏蔽失效）
+    mask_bf16_ = (net_blocks_[0]->input_dtypes[2] == BM_FLOAT16) ? 0xF0E2 : 0xC61C;
+    // addr mode 1：KV 常驻 buffer 直接用网络预分配的 input_mems[3]/[4]（QwenEngine 同款）
     past_key_dev_.resize(NUM_LAYERS);
     past_value_dev_.resize(NUM_LAYERS);
     for (int i = 0; i < NUM_LAYERS; i++) {
-        bm_malloc_device_byte(handle_, &past_key_dev_[i], kv_layer_bytes_);
-        bm_malloc_device_byte(handle_, &past_value_dev_[i], kv_layer_bytes_);
+        past_key_dev_[i]   = net_blocks_cache_[i]->stages[0].input_mems[3];
+        past_value_dev_[i] = net_blocks_cache_[i]->stages[0].input_mems[4];
         int z = 0;
         bm_memset_device_ext(handle_, &z, 1, past_key_dev_[i]);
         bm_memset_device_ext(handle_, &z, 1, past_value_dev_[i]);
@@ -276,62 +279,141 @@ static int lm_greedy(void* rt, bm_handle_t h, const bm_net_info_t* lm,
     return token;
 }
 
-int Qwen3Bmodel::forward_first(const std::vector<float>& embeds_f32, int tlen) {
+// fp32 → bf16（四舍五入，Eureka 同款）
+static std::vector<uint16_t> fp32_to_bf16_vec(const float* data, int n) {
+    std::vector<uint16_t> out(n);
+    for (int i = 0; i < n; i++) {
+        uint32_t u;
+        memcpy(&u, &data[i], 4);
+        u += 0x7FFF + ((u >> 16) & 1);
+        out[i] = (uint16_t)(u >> 16);
+    }
+    return out;
+}
+// bf16 → fp32
+static void bf16_to_fp32_vec(const uint16_t* in, int n, float* out) {
+    for (int i = 0; i < n; i++) {
+        uint32_t u = (uint32_t)in[i] << 16;
+        float f; memcpy(&f, &u, 4);
+        out[i] = f;
+    }
+}
+
+int Qwen3Bmodel::forward_first(const std::vector<int>& input_ids, int tlen,
+                               const std::vector<float>& audio_embeds, int audio_start) {
     token_length = tlen;
     const int S = MAX_INPUT_LEN, H = hidden_size_;
-    const size_t kv_tlen_bytes = kv_token_bytes_ * tlen;  // 有效 KV 段（F16 时自动减半）
+    const size_t kv_tlen_bytes = kv_token_bytes_ * tlen;  // 有效 KV 段（bf16 自动减半）
 
-    // 1. pos + mask 预填一次（每层复用同一 device buffer）
+    // 1. pos + mask 预填一次（mask -inf 值按 dtype：fp16=0xF0E2，bf16=0xC61C）
     std::vector<int>   position_id(S, 0);
-    std::vector<float> attention_mask((size_t)S * S, mask_value_f32_);
+    std::vector<uint16_t> attention_mask((size_t)S * S, mask_bf16_);
     for (int i = 0; i < tlen; i++) position_id[i] = i;
     for (int i = 0; i < tlen; i++)
         for (int j = 0; j <= i; j++)
-            attention_mask[(size_t)i * S + j] = 0.0f;
-    bm_memcpy_s2d(handle_, pre_pos_,   position_id.data());
-    bm_memcpy_s2d(handle_, pre_mask_,  attention_mask.data());
+            attention_mask[(size_t)i * S + j] = 0;
+    bm_memcpy_s2d(handle_, pre_pos_,  position_id.data());
+    bm_memcpy_s2d(handle_, pre_mask_, attention_mask.data());
 
-    // 2. embeds → pre_hidden_a
-    bm_memcpy_s2d(handle_, pre_hidden_a_, (void*)embeds_f32.data());
+    // 2. embedding 网络：input_ids → 文本 embeds（bf16）→ host 转 f32（addr mode 1：用 input_mems）
+    std::vector<float> embeds((size_t)S * H, 0.0f);
+    if (net_embed_) {
+        auto& e_in  = net_embed_->stages[0].input_mems[0];
+        auto& e_out = net_embed_->stages[0].output_mems[0];
+        std::vector<int32_t> ids_pad(S, 0);
+        for (int i = 0; i < tlen && i < (int)input_ids.size(); i++) ids_pad[i] = input_ids[i];
+        bm_memcpy_s2d(handle_, e_in, ids_pad.data());
+        bm_tensor_t ein, eout;
+        bmrt_tensor_with_device(&ein,  e_in,  net_embed_->input_dtypes[0],  net_embed_->stages[0].input_shapes[0]);
+        bmrt_tensor_with_device(&eout, e_out, net_embed_->output_dtypes[0], net_embed_->stages[0].output_shapes[0]);
+        if (!bmrt_launch_tensor_ex(p_bmrt_, net_embed_->name, &ein, 1, &eout, 1, true, false)) {
+            fprintf(stderr, "[Qwen3] embedding launch failed\n"); return -1;
+        }
+        bm_thread_sync(handle_);
+        std::vector<uint16_t> e_bf16((size_t)tlen * H);
+        bm_memcpy_d2s_partial_offset(handle_, e_bf16.data(), e_out,
+                                     (size_t)tlen * H * 2, 0);
+        bf16_to_fp32_vec(e_bf16.data(), (size_t)tlen * H, embeds.data());
+    }
 
-    // 3. 28 层：hidden ping-pong（device 内接力，无 host 中转）+ KV d2d 拷贝（免 host 往返）
+    // 3. audio embeds 替换占位位置
+    if (!audio_embeds.empty()) {
+        memcpy(embeds.data() + (size_t)audio_start * H, audio_embeds.data(),
+               audio_embeds.size() * sizeof(float));
+    }
+
+    // 4. embeds（f32）→ bf16 → dev buffer（层间 d2d 中转）
+    auto emb_bf16 = fp32_to_bf16_vec(embeds.data(), (size_t)S * H);
+    bm_memcpy_s2d(handle_, pre_hidden_a_, emb_bf16.data());
+
+    // 5. 28 层（addr mode 1：用网络预分配 input_mems；每层 launch 后必须 sync——
+    //    bmrt_launch_tensor_ex 是异步的，CPU 不被阻塞）
+    const size_t hidden_t_bytes = (size_t)tlen * H * 2;   // bf16 有效段
     for (int i = 0; i < NUM_LAYERS; i++) {
-        bm_device_mem_t& in_h  = (i % 2 == 0) ? pre_hidden_a_ : pre_hidden_b_;
-        bm_device_mem_t& out_h = (i % 2 == 0) ? pre_hidden_b_ : pre_hidden_a_;
         auto net = net_blocks_[i];
+        auto& in0 = net->stages[0].input_mems[0];
+        auto& in1 = net->stages[0].input_mems[1];
+        auto& in2 = net->stages[0].input_mems[2];
+        if (i == 0) {
+            bm_memcpy_s2d(handle_, in0, emb_bf16.data());
+        }
+        if (i == 0) {   // pos/mask 各层共享同一 input_mem（已验证地址相同），只传一次
+            bm_memcpy_s2d(handle_, in1, position_id.data());
+            bm_memcpy_s2d(handle_, in2, attention_mask.data());
+        }
         bm_tensor_t ins[3], outs[3];
-        bmrt_tensor_with_device(&ins[0],  in_h,    net->input_dtypes[0],  net->stages[0].input_shapes[0]);
-        bmrt_tensor_with_device(&ins[1],  pre_pos_, net->input_dtypes[1],  net->stages[0].input_shapes[1]);
-        bmrt_tensor_with_device(&ins[2],  pre_mask_, net->input_dtypes[2], net->stages[0].input_shapes[2]);
-        bmrt_tensor_with_device(&outs[0], out_h,   net->output_dtypes[0], net->stages[0].output_shapes[0]);
-        bmrt_tensor_with_device(&outs[1], pre_kv_, net->output_dtypes[1], net->stages[0].output_shapes[1]);
-        bmrt_tensor_with_device(&outs[2], pre_v_,  net->output_dtypes[2], net->stages[0].output_shapes[2]);
+        bmrt_tensor_with_device(&ins[0],  in0,  net->input_dtypes[0],  net->stages[0].input_shapes[0]);
+        bmrt_tensor_with_device(&ins[1],  in1,  net->input_dtypes[1],  net->stages[0].input_shapes[1]);
+        bmrt_tensor_with_device(&ins[2],  in2,  net->input_dtypes[2],  net->stages[0].input_shapes[2]);
+        bmrt_tensor_with_device(&outs[0], net->stages[0].output_mems[0], net->output_dtypes[0], net->stages[0].output_shapes[0]);
+        bmrt_tensor_with_device(&outs[1], net->stages[0].output_mems[1], net->output_dtypes[1], net->stages[0].output_shapes[1]);
+        bmrt_tensor_with_device(&outs[2], net->stages[0].output_mems[2], net->output_dtypes[2], net->stages[0].output_shapes[2]);
         if (!bmrt_launch_tensor_ex(p_bmrt_, net->name, ins, 3, outs, 3, true, false)) {
             fprintf(stderr, "[Qwen3] block_%d launch failed\n", i);
             return -1;
         }
-        // KV 有效段 d2d 进常驻 buffer（只拷 tlen 段；同一 handle 串行，无需额外 sync）
-        bm_memcpy_d2d_byte(handle_, past_key_dev_[i],   0, pre_kv_, 0, kv_tlen_bytes);
-        bm_memcpy_d2d_byte(handle_, past_value_dev_[i], 0, pre_v_,  0, kv_tlen_bytes);
+        bm_thread_sync(handle_);
+        // 层间 d2d：输出 → 下一层 in0（QwenEngine 同款；d2d 异步，sync 后再 launch）
+        if (i + 1 < NUM_LAYERS) {
+            auto& next_in0 = net_blocks_[i + 1]->stages[0].input_mems[0];
+            bm_memcpy_d2d_byte(handle_, next_in0, 0, net->stages[0].output_mems[0], 0, hidden_t_bytes);
+            bm_thread_sync(handle_);
+        }
+        // KV 有效段 d2d 进常驻 buffer
+        bm_memcpy_d2d_byte(handle_, past_key_dev_[i],   0, net->stages[0].output_mems[1], 0, kv_tlen_bytes);
+        bm_memcpy_d2d_byte(handle_, past_value_dev_[i], 0, net->stages[0].output_mems[2], 0, kv_tlen_bytes);
     }
     bm_thread_sync(handle_);
 
-    // 4. 最后一层输出（NUM_LAYERS 偶数 → pre_hidden_a）取最后一个有效 token
-    bm_device_mem_t& last_h = (NUM_LAYERS % 2 == 0) ? pre_hidden_a_ : pre_hidden_b_;
-    std::vector<float> last_hidden(H);
-    bm_memcpy_d2s_partial_offset(handle_, last_hidden.data(), last_h, H * sizeof(float),
-                                 (size_t)(tlen - 1) * H * sizeof(float));
-    int token;
-    if (net_greedy_head_) {
-        token = lm_greedy(p_bmrt_, handle_, net_lm_, net_greedy_head_, last_hidden.data());
-    } else {
-        int vocab = net_lm_->stages[0].output_shapes[0].dims[2];
-        std::vector<float> logits(vocab);
-        launch_host(p_bmrt_, handle_, net_lm_, { last_hidden.data() }, { logits.data() });
-        token = argmax_logits(logits);
+    // 6. lm_head：最后一层输出最后一个有效 token（d2d 到 lm_head 输入）→ token_id
+    const bm_net_info_t* last_net = net_blocks_[NUM_LAYERS - 1];
+    auto& lm_in  = net_lm_->stages[0].input_mems[0];
+    auto& lm_out = net_lm_->stages[0].output_mems[0];
+    bm_memcpy_d2d_byte(handle_, lm_in, 0, last_net->stages[0].output_mems[0],
+                       (size_t)(tlen - 1) * H * 2, (size_t)H * 2);
+    bm_thread_sync(handle_);
+    bm_tensor_t lt_in, lt_out;
+    bmrt_tensor_with_device(&lt_in,  lm_in,  net_lm_->input_dtypes[0],  net_lm_->stages[0].input_shapes[0]);
+    bmrt_tensor_with_device(&lt_out, lm_out, net_lm_->output_dtypes[0], net_lm_->stages[0].output_shapes[0]);
+    if (!bmrt_launch_tensor_ex(p_bmrt_, net_lm_->name, &lt_in, 1, &lt_out, 1, true, false)) {
+        fprintf(stderr, "[Qwen3] lm_head launch failed\n");
+        return -1;
     }
+    bm_thread_sync(handle_);
+    // 标准 bmodel：lm_head 输出直接是 token_id（int32，内置 argmax）
+    int token = 0;
+    bm_memcpy_d2s(handle_, &token, lm_out);
     cur_token_ = token;
     return token;
+}
+
+// hidden（f32 host）→ bf16 → lm_head → argmax
+int Qwen3Bmodel::lm_head_argmax(const float* hidden_f32) {
+    auto h_bf16 = fp32_to_bf16_vec(hidden_f32, hidden_size_);
+    int vocab = net_lm_->stages[0].output_shapes[0].dims[2];
+    std::vector<float> logits(vocab);
+    launch_host(p_bmrt_, handle_, net_lm_, { h_bf16.data() }, { logits.data() });
+    return argmax_logits(logits);
 }
 
 int Qwen3Bmodel::forward_next() {
@@ -341,62 +423,75 @@ int Qwen3Bmodel::forward_next() {
     }
     int cur_token = cur_token_;
     const int H = hidden_size_;
-    // 修正 off-by-one：本步处理位置 token_length（0-indexed），写回 KV slot token_length
-    int pos = token_length;
+    int pos = token_length;   // 修正 off-by-one：本步处理位置 token_length
 
-    {
-        auto ec = net_embed_cache_;
-        bm_tensor_t ein, eout;
-        bmrt_tensor(&ein, p_bmrt_, ec->input_dtypes[0], ec->stages[0].input_shapes[0]);
-        int32_t tok = cur_token;
-        bm_memcpy_s2d(handle_, ein.device_mem, &tok);
-        bmrt_tensor_with_device(&eout, dec_emb_out_, ec->output_dtypes[0], ec->stages[0].output_shapes[0]);
-        bmrt_launch_tensor_ex(p_bmrt_, ec->name, &ein, 1, &eout, 1, true, false);
-        bm_thread_sync(handle_);
-        bm_free_device(handle_, ein.device_mem);
-    }
-    bm_memcpy_d2d_byte(handle_, dec_hidden_, 0, dec_emb_out_, 0, bm_mem_get_device_size(dec_hidden_));
-
+    // decode mask（按 dtype 选 -inf 值）：0..pos 与 SEQ 位（新 key）可见
+    std::vector<uint16_t> attention_mask(SEQLEN + 1, 0);
+    for (int i = pos + 1; i < SEQLEN; i++) attention_mask[i] = mask_bf16_;   // 无效槽位屏蔽
     int32_t position_id = pos;
-    bm_memcpy_s2d(handle_, dec_pos_, &position_id);
-    // mask（与板上验证正确的 python 版一致）：
-    //   0..pos-1 是已写入的 KV 槽位（可见），pos..SEQ-1 无效槽位屏蔽，
-    //   SEQ 位（本次新 key）保持 0 可见。
-    // 注意不能从 pos+1 起屏蔽——那会放行 pos 位的全零 KV 槽位导致 attention 错乱。
-    std::vector<float> attention_mask(SEQLEN + 1, 0.0f);
-    for (int i = pos; i < SEQLEN; i++) attention_mask[i] = mask_value_f32_;
-    bm_memcpy_s2d(handle_, dec_mask_, attention_mask.data());
 
+    // embedding_cache：token ids → hidden（网络 mem 流转）
+    auto ec = net_embed_cache_;
+    auto& e_in  = ec->stages[0].input_mems[0];
+    auto& e_out = ec->stages[0].output_mems[0];
+    bm_memcpy_s2d(handle_, e_in, (void*)&cur_token);
+    bm_tensor_t ein, eout;
+    bmrt_tensor_with_device(&ein,  e_in,  ec->input_dtypes[0],  ec->stages[0].input_shapes[0]);
+    bmrt_tensor_with_device(&eout, e_out, ec->output_dtypes[0], ec->stages[0].output_shapes[0]);
+    if (!bmrt_launch_tensor_ex(p_bmrt_, ec->name, &ein, 1, &eout, 1, true, false)) return -1;
+    bm_thread_sync(handle_);
+
+    // 28 层 block_cache（addr mode 1：全用网络 input_mems）
+    const size_t kv_off = (size_t)pos * kv_token_bytes_;   // 新 KV 写回偏移
     for (int i = 0; i < NUM_LAYERS; i++) {
         auto net = net_blocks_cache_[i];
+        auto& in1 = net->stages[0].input_mems[1];
+        auto& in2 = net->stages[0].input_mems[2];
+        auto& in3 = net->stages[0].input_mems[3];
+        auto& in4 = net->stages[0].input_mems[4];
+        auto& out0 = net->stages[0].output_mems[0];
+        if (i == 0) {
+            bm_memcpy_s2d(handle_, in1, (void*)&position_id);
+            bm_memcpy_s2d(handle_, in2, (void*)attention_mask.data());
+        }
         bm_tensor_t ins[5], outs[3];
-        bmrt_tensor_with_device(&ins[0], dec_hidden_,    net->input_dtypes[0], net->stages[0].input_shapes[0]);
-        bmrt_tensor_with_device(&ins[1], dec_pos_,       net->input_dtypes[1], net->stages[0].input_shapes[1]);
-        bmrt_tensor_with_device(&ins[2], dec_mask_,      net->input_dtypes[2], net->stages[0].input_shapes[2]);
-        bmrt_tensor_with_device(&ins[3], past_key_dev_[i],   net->input_dtypes[3], net->stages[0].input_shapes[3]);
-        bmrt_tensor_with_device(&ins[4], past_value_dev_[i], net->input_dtypes[4], net->stages[0].input_shapes[4]);
-        bmrt_tensor_with_device(&outs[0], dec_hidden_,   net->output_dtypes[0], net->stages[0].output_shapes[0]);
-        bmrt_tensor_with_device(&outs[1], dec_newk_,     net->output_dtypes[1], net->stages[0].output_shapes[1]);
-        bmrt_tensor_with_device(&outs[2], dec_newv_,     net->output_dtypes[2], net->stages[0].output_shapes[2]);
-        bool ok = bmrt_launch_tensor_ex(p_bmrt_, net->name, ins, 5, outs, 3, true, false);
-        if (!ok) { fprintf(stderr, "[Qwen3] block_cache_%d failed\n", i); return -1; }
-        size_t dst_off = (size_t)pos * kv_token_bytes_;
-        bm_memcpy_d2d_byte(handle_, past_key_dev_[i],   dst_off, dec_newk_, 0, kv_token_bytes_);
-        bm_memcpy_d2d_byte(handle_, past_value_dev_[i], dst_off, dec_newv_, 0, kv_token_bytes_);
+        // in0 = 上一层的输出（e_out 或 out0，网络 mem）
+        bmrt_tensor_with_device(&ins[0], (i == 0) ? e_out : net_blocks_cache_[i-1]->stages[0].output_mems[0],
+                                net->input_dtypes[0], net->stages[0].input_shapes[0]);
+        bmrt_tensor_with_device(&ins[1], net_blocks_cache_[0]->stages[0].input_mems[1],
+                                net->input_dtypes[1], net->stages[0].input_shapes[1]);
+        bmrt_tensor_with_device(&ins[2], net_blocks_cache_[0]->stages[0].input_mems[2],
+                                net->input_dtypes[2], net->stages[0].input_shapes[2]);
+        bmrt_tensor_with_device(&ins[3], in3, net->input_dtypes[3], net->stages[0].input_shapes[3]);
+        bmrt_tensor_with_device(&ins[4], in4, net->input_dtypes[4], net->stages[0].input_shapes[4]);
+        bmrt_tensor_with_device(&outs[0], out0, net->output_dtypes[0], net->stages[0].output_shapes[0]);
+        // 新 KV 直接写进累积 buffer 的偏移（bm_mem_from_device 地址偏移）
+        bm_device_mem_t k_mem = bm_mem_from_device(in3.u.device.device_addr + kv_off, kv_token_bytes_);
+        bm_device_mem_t v_mem = bm_mem_from_device(in4.u.device.device_addr + kv_off, kv_token_bytes_);
+        bmrt_tensor_with_device(&outs[1], k_mem, net->output_dtypes[1], net->stages[0].output_shapes[1]);
+        bmrt_tensor_with_device(&outs[2], v_mem, net->output_dtypes[2], net->stages[0].output_shapes[2]);
+        if (!bmrt_launch_tensor_ex(p_bmrt_, net->name, ins, 5, outs, 3, true, false)) {
+            fprintf(stderr, "[Qwen3] block_cache_%d failed\n", i);
+            return -1;
+        }
+        // launch 异步：下一层输入依赖本层输出，必须 sync 后再 launch
+        bm_thread_sync(handle_);
     }
 
+    // lm_head：最后一层输出 → logits → argmax
+    auto& lm_in  = net_lm_->stages[0].input_mems[0];
+    auto& lm_out = net_lm_->stages[0].output_mems[0];
+    auto& last_out = net_blocks_cache_[NUM_LAYERS-1]->stages[0].output_mems[0];
+    bm_memcpy_d2d_byte(handle_, lm_in, 0, last_out, 0, (size_t)H * 2);
+    bm_thread_sync(handle_);   // d2d 异步，必须 sync 后再 launch lm_head
+    bm_tensor_t lt_in, lt_out;
+    bmrt_tensor_with_device(&lt_in,  lm_in,  net_lm_->input_dtypes[0],  net_lm_->stages[0].input_shapes[0]);
+    bmrt_tensor_with_device(&lt_out, lm_out, net_lm_->output_dtypes[0], net_lm_->stages[0].output_shapes[0]);
+    if (!bmrt_launch_tensor_ex(p_bmrt_, net_lm_->name, &lt_in, 1, &lt_out, 1, true, false)) return -1;
     bm_thread_sync(handle_);
-    std::vector<float> dh(H);
-    bm_memcpy_d2s(handle_, dh.data(), dec_hidden_);
-    int token;
-    if (net_greedy_head_) {
-        token = lm_greedy(p_bmrt_, handle_, net_lm_, net_greedy_head_, dh.data());
-    } else {
-        int vocab = net_lm_->stages[0].output_shapes[0].dims[2];
-        std::vector<float> logits(vocab);
-        launch_host(p_bmrt_, handle_, net_lm_, { dh.data() }, { logits.data() });
-        token = argmax_logits(logits);
-    }
+    // 标准 bmodel：lm_head 输出直接是 token_id（int32）
+    int token = 0;
+    bm_memcpy_d2s(handle_, &token, lm_out);
     token_length++;
     cur_token_ = token;
     return token;
@@ -459,6 +554,20 @@ bool AsrPipeline::init(const std::string& encoder_path, const std::string& qwen3
         fprintf(stderr, "[ASR] prefix/suffix embeds load failed (plen=%d slen=%d)\n", plen_, slen_);
         return false;
     }
+    // 加载 prefix/suffix token ids（标准 Qwen3 bmodel 用 input_ids + embedding 网络）
+    auto load_ids = [](const std::string& path, std::vector<int>& out) -> bool {
+        FILE* fp = fopen(path.c_str(), "r");
+        if (!fp) return false;
+        int id;
+        while (fscanf(fp, "%d", &id) == 1) out.push_back(id);
+        fclose(fp);
+        return !out.empty();
+    };
+    if (!load_ids(model_dir + "/prefix_ids.txt", prefix_ids_) ||
+        !load_ids(model_dir + "/suffix_ids.txt", suffix_ids_)) {
+        fprintf(stderr, "[ASR] prefix/suffix ids load failed\n");
+        return false;
+    }
     printf("[ASR] prefix %d tokens, suffix %d tokens\n", plen_, slen_);
 
     // mel 滤波器 + tokenizer
@@ -491,6 +600,18 @@ void AsrPipeline::deinit() {
     if (bm_handle_enc_) { bm_dev_free(bm_handle_enc_); bm_handle_enc_ = nullptr; }
     if (bm_handle_) { bm_dev_free(bm_handle_); bm_handle_ = nullptr; }
     loaded_ = false;
+}
+
+int AsrPipeline::build_input_ids(int alen, std::vector<int>& ids_out, int& tlen) const {
+    const int S = cfg_.seq_length;
+    tlen = plen_ + alen + slen_;
+    if (tlen > S) { fprintf(stderr, "[ASR] tlen %d > SEQ %d\n", tlen, S); return -1; }
+    ids_out.assign(S, 0);
+    int p = 0;
+    for (int id : prefix_ids_) ids_out[p++] = id;
+    for (int i = 0; i < alen; i++) ids_out[p++] = cfg_.audio_token_id;   // <|audio_pad|>
+    for (int id : suffix_ids_) ids_out[p++] = id;
+    return plen_;   // audio 段起始位置
 }
 
 bool AsrPipeline::build_inputs_embeds(const std::vector<float>& audio_embeds, int alen,
@@ -618,13 +739,31 @@ std::string AsrPipeline::generate_from_audio(int max_new_tokens) {
     std::vector<float> audio(stream_audio_tokens_.begin(),
                              stream_audio_tokens_.begin() + (size_t)alen * H);
 
-    std::vector<float> embeds;
+    std::vector<int> ids;
     int tlen = 0;
-    if (!build_inputs_embeds(audio, alen, embeds, tlen)) return "";
+    int audio_start = build_input_ids(alen, ids, tlen);
+    if (audio_start < 0) return "";
     qwen3_.clear_kv();
-    int cur = qwen3_.forward_first(embeds, tlen);
+    int cur = qwen3_.forward_first(ids, tlen, audio, audio_start);
     if (cur < 0) return "";
 
+    std::vector<int> result;
+    const int EOS1 = cfg_.eos_im_end, EOS2 = cfg_.eos_eot;
+    while ((int)result.size() < max_new_tokens) {
+        if (cur == EOS1 || cur == EOS2) break;
+        result.push_back(cur);
+        cur = qwen3_.forward_next();
+        if (cur < 0) break;
+    }
+    return tok_.decode(result);
+}
+
+// 纯文本生成（调试用：绕过 encoder/audio，直接验证 LLM 链路）
+std::string AsrPipeline::text_generate(const std::vector<int>& input_ids, int max_new_tokens) {
+    if (!loaded_) return "";
+    qwen3_.clear_kv();
+    int cur = qwen3_.forward_first(input_ids, (int)input_ids.size(), {}, -1);
+    if (cur < 0) return "";
     std::vector<int> result;
     const int EOS1 = cfg_.eos_im_end, EOS2 = cfg_.eos_eot;
     while ((int)result.size() < max_new_tokens) {
@@ -663,11 +802,12 @@ std::string AsrPipeline::transcribe(const std::string& wav_path, int max_new_tok
                                     audio_embeds_full.begin() + (size_t)alen * H);
 
     // ── 3. 拼 embeds → prefill → decode ──
-    std::vector<float> embeds;
+    std::vector<int> ids;
     int tlen = 0;
-    if (!build_inputs_embeds(audio_embeds, alen, embeds, tlen)) return "";
+    int audio_start = build_input_ids(alen, ids, tlen);
+    if (audio_start < 0) return "";
     qwen3_.clear_kv();
-    int cur = qwen3_.forward_first(embeds, tlen);
+    int cur = qwen3_.forward_first(ids, tlen, audio_embeds, audio_start);
     t_pre = std::chrono::steady_clock::now();
     if (cur < 0) return "";
 
