@@ -14,6 +14,7 @@ Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP
 | [VITS-MeloTTS](vits-melo-tts-zh_en/) | 文本转语音（中英双语） | FP32 | RTF ~0.12 | ✅ 完成 |
 | [Eureka-Audio](Eureka-Audio/) | 音频指令分类（whisper encoder + Qwen3-1.7B） | W4BF16 | 准确率 ~90%，端到端 ~2.3s/条（Python·sail / C++ 均跑通） | ✅ 完成 |
 | [QwenLLM 系列](QwenLLM/) | LLM 意图识别（Qwen3-0.6B，v95 系列） | W4BF16 / W8BF16 | v95 recall + 意图分类组合，FTL ~0.3s | ✅ 完成 |
+| [Qwen3-ASR](Qwen3-ASR/) | 语音识别 + 语种识别（30 语种 + 22 中文方言，LLM 类） | F16 + W4BF16 | 离线 RTF 0.15（0.85s）；流式 1s 块实时（平均 RTF 0.64） | ✅ 完成 |
 
 ## 项目结构
 
@@ -34,6 +35,7 @@ Sophon_model_zoo/
 ├── chatTTS/                  # ChatTTS 移植（纯 bmruntime C++，支持流式）
 ├── vits-melo-tts-zh_en/      # VITS-MeloTTS 中英双语移植
 ├── Eureka-Audio/             # 音频指令分类（whisper encoder + Qwen3-1.7B，Python·sail + C++）
+├── Qwen3-ASR/                # Qwen3-ASR-0.6B 语音识别 + 语种识别（C++ bmrt + sail，支持流式）
 └── QwenLLM/                  # Qwen 系列 LLM 意图识别（v95 系列）
     ├── LLM-TPU/              # sophgo 官方 demo（不入库，本地克隆）
     ├── scripts/              # 编译/部署/下载脚本

@@ -24,6 +24,7 @@
 | Whisper large-v3-turbo | F16 | 1.7GB（enc 1.3G + dec 460M） | enc 峰值 1.66G / dec 669M | 0.353 | ~2.6s | 中文 RTF 0.281 / 英文 0.419 |
 | Whisper base | F16 | ~201MB（enc 46M + dec 155M） | 未实测（板上未部署） | — | ~1.01s（5.8s音频） | 自回归；F32 ~1.86s |
 | **Moonshine streaming-small** | F16 | 280MB（enc 109M + dec 171M） | — | **0.045**（实测） | **~296ms**（6.6s音频） | 轻量英文流式 ASR，10s 固定输入；F32 RTF 0.099 / 653ms |
+| **Qwen3-ASR-0.6B** | F16 + W4BF16 | 1.5GB | 1838MB | **0.15**（实测） | **0.85s**（5.6s音频） | LLM 类 ASR（30语种+22方言+语种识别），≤8s 音频，2026-08-08 实测 |
 
 **SenseVoice 与 Whisper 取舍**
 - SenseVoice：RTF 0.0094 速度碾压、内存小，但仅做识别 + 语种/情感/事件，无翻译。适合实时识别主力。
