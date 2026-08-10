@@ -1,5 +1,7 @@
-# 模型权重与 bmodel（本地生成，不入库）
-models/
+# 模型权重与 bmodel（本地生成，不入库）；保留必需小文件（ids/mel/tokenizer/config）
+models/*.safetensors
+models/BM1684X/*.bmodel
+models/README.md
 
 # 编译中间产物
 compile/tmp/

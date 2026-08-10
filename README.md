@@ -14,7 +14,7 @@ Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP
 | [VITS-MeloTTS](vits-melo-tts-zh_en/) | 文本转语音（中英双语） | FP32 | RTF ~0.12 | ✅ 完成 |
 | [Eureka-Audio](Eureka-Audio/) | 音频指令分类（whisper encoder + Qwen3-1.7B） | W4BF16 | 准确率 ~90%，端到端 ~2.3s/条（Python·sail / C++ 均跑通） | ✅ 完成 |
 | [QwenLLM 系列](QwenLLM/) | LLM 意图识别（Qwen3-0.6B，v95 系列） | W4BF16 / W8BF16 | v95 recall + 意图分类组合，FTL ~0.3s | ✅ 完成 |
-| [Qwen3-ASR](Qwen3-ASR/) | 语音识别 + 语种识别（30 语种 + 22 中文方言，LLM 类） | F16 + W4BF16 | 官方工具链：RTF 0.09（~0.5s），FTL 97ms，decode 64.5 tok/s | ✅ 完成 |
+| [Qwen3-ASR](Qwen3-ASR/) | 语音识别 + 语种识别（30 语种 + 22 中文方言，LLM 类） | W4BF16(g64) | 单文件 646MB，RTF 0.10（~0.6s），decode 64-65 tok/s，流式实时 | ✅ 完成 |
 
 ## 项目结构
 

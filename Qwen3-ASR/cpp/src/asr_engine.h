@@ -26,19 +26,20 @@ struct AsrConfig {
 };
 
 // ── EncoderBmodel ────────────────────────────────────────────────────────────
-// 封装 qwen3_asr_encoder_F16.bmodel：mel [1,128,3000] → audio_embeds [390,1024]
+// 封装全量 encoder（对齐官方 Python/transformers 语义）：mel [1,128,3000]（30s）→ [390,1024]
+// 离线/流式共用同一个网络（流式每次全量重编码，0.08s 固定开销，1s 块下实时）
 class EncoderBmodel {
 public:
     EncoderBmodel() = default;
     ~EncoderBmodel();
-    bool init(bm_handle_t handle, const std::string& bmodel_path,
-              const char* net_name = "qwen3_asr_encoder");
+    // 从主 bmrt（单文件已加载）取指定网络，不独立加载 bmodel
+    bool init(void* p_bmrt, const char* net_name = "qwen3_asr_encoder");
     void release();
-    // mel: [1,128,3000] row-major → out [390,1024] row-major
+    // mel: [1,128,3000] row-major → out [390,1024] row-major（shape 从网络读，自动适配）
     bool run(const float* mel, std::vector<float>& out);
 private:
     bm_handle_t handle_ = nullptr;
-    void* p_bmrt_ = nullptr;
+    void* p_bmrt_ = nullptr;      // 主 bmrt（共享，不 destroy）
     const bm_net_info_t* net_ = nullptr;
     bool inited_ = false;
 };
@@ -55,11 +56,15 @@ public:
     bool init(bm_handle_t handle, const std::string& bmodel_path);
     void deinit();
 
-    // prefill：embeds [1, S, H]（prefix + audio + suffix 拼好，尾部补零）→ 首 token
-    int forward_first(const std::vector<float>& embeds_f32, int tlen);
+    // prefill：input_ids（含 audio 占位 token）+ audio embeds → 首 token
+    // 流程：embedding 网络（token ids → 文本 embeds）→ 替换 audio 段 → block 循环
+    int forward_first(const std::vector<int>& input_ids, int tlen,
+                      const std::vector<float>& audio_embeds, int audio_start);
     // decode：上一步 token → 下一步 token
     int forward_next();
     void clear_kv();
+    void* bmrt() const { return p_bmrt_; }
+
 
     int token_length  = 0;
     int SEQLEN        = 0;
@@ -72,6 +77,7 @@ private:
     bm_handle_t handle_ = nullptr;
     void* p_bmrt_ = nullptr;
 
+    const bm_net_info_t* net_embed_        = nullptr;  // prefill: token ids → embeds（标准 Qwen3 bmodel）
     const bm_net_info_t* net_embed_cache_ = nullptr;
     const bm_net_info_t* net_lm_          = nullptr;
     const bm_net_info_t* net_greedy_head_ = nullptr;
@@ -104,36 +110,40 @@ private:
     bm_device_mem_t pre_v_;
     bool pre_io_ready_ = false;
 
-    float mask_value_f32_ = -1e9f;
+    uint16_t mask_bf16_ = 0xC61C;   // attention mask -inf 值（bf16）
     int cur_token_ = 0;
     bool inited_ = false;
+
+    // hidden f32 → bf16 → lm_head → argmax（标准 Qwen3 bmodel 全 bf16 链）
+    int lm_head_argmax(const float* hidden_f32);
 };
 
 // ── AsrPipeline ───────────────────────────────────────────────────────────────
 // 顶层推理类：mel → encoder → 拼 embeds → LLM 生成 → 文本
 class AsrPipeline {
 public:
-    bool init(const std::string& encoder_path, const std::string& qwen3_path,
-              const std::string& model_dir, int device_id = 0);
+    // 单文件 bmodel（encoder + LLM 合并）：一个 handle + 一个 bmrt，encoder 复用 LLM 的 bmrt
+    bool init(const std::string& bmodel_path, const std::string& model_dir, int device_id = 0);
     void deinit();
 
     // 单音频转写：返回 "language <NAME><asr_text>..." 原始文本
     // 失败返回空字符串
     std::string transcribe(const std::string& wav_path, int max_new_tokens = 256);
 
-    // ── 流式推理（对齐官方：1s chunk + 5s 重编码窗口）────────────────────────
-    bool init_stream(const std::string& encoder_w500_path);  // 加载窗口版 encoder（500 mel 帧）
+    // 纯文本生成（调试用：绕过 encoder/audio，直接验证 LLM 链路）
+    std::string text_generate(const std::vector<int>& input_ids, int max_new_tokens = 32);
+
+    // ── 流式推理（全量重编码：每次 update 全量 mel 过 encoder + 全量 prefill）───
+    bool init_stream();   // encoder 就是主 encoder，无额外初始化
     void stream_push(const float* samples, int n);           // 推入音频（16k mono，建议按 1s=16000 对齐）
     // 增量处理：返回中间转写（可修订）；每次 push 后调用
     std::string stream_update(int max_new_tokens = 32);
-    // 定稿：完整转写
+    // 定稿：完整转写（与 update 同一路径，行为一致）
     std::string stream_finish(int max_new_tokens = 256);
 
 private:
-    bm_handle_t bm_handle_ = nullptr;    // LLM bmrt 的 handle
-    bm_handle_t bm_handle_enc_ = nullptr; // encoder bmrt 独立 handle（实测共享 handle 时 encoder 输出 NaN）
-    EncoderBmodel enc_;
-    EncoderBmodel enc_w500_;   // 流式窗口 encoder（500 mel 帧 = 5s）
+    bm_handle_t bm_handle_ = nullptr;    // 唯一 handle（单文件 bmodel）
+    EncoderBmodel enc_;                  // chunk encoder（离线/流式共用）
     Qwen3Bmodel  qwen3_;
     QwenMel mel_;
     Qwen3Tokenizer tok_;
@@ -147,22 +157,26 @@ private:
     int stream_mel_frames_ = 0;              // 已计算 mel 帧数
     std::vector<float> stream_audio_tokens_; // 累积 audio embeds [N, 1024]
     int stream_audio_count_ = 0;             // 累积 audio token 数
+    std::string stream_partial_text_;        // 分段定稿历史（每段一行，支持无限持续流式）
     // 基于累积 audio tokens 生成转写（流式共用）
     std::string generate_from_audio(int max_new_tokens);
-    // 用 mel 缓存重编码最近 win 帧窗口（win ≤ 500，起点对齐 100），更新累积 audio tokens
-    int reencode_window(int win);
-
     // 计算 audio token 数（与 processor._get_audio_token_length 一致：3 次 stride2 conv）
     static int mel_frames_to_tokens(int t_real_mel);
+    // mel（[T,128] t-major）→ pad 到 3000（复制尾帧）→ 全量 encoder → [390,1024] → 截取
+    bool encode_full_mel(const std::vector<float>& mel, int T,
+                         std::vector<float>& audio_out, int& alen);
+    // 在 center 附近找静音窗口中心（mel_log 帧均值 < -7 = 静音），找不到返回 center
+    static int find_silence_center(const std::vector<float>& mel_log, int T,
+                                   int center, int search = 150);
 
-    std::vector<float> prefix_embeds_;   // [plen, 1024]
-    std::vector<float> suffix_embeds_;   // [slen, 1024]
+    std::vector<int>   prefix_ids_;      // prefix token ids（audio_start 前）
+    std::vector<int>   suffix_ids_;      // suffix token ids（audio_end 后）
     int plen_ = 0, slen_ = 0;
     bool loaded_ = false;
 
-    // 构造 prefill 输入 embeds（prefix + audio + suffix，[1,S,H] 尾部补零）
-    bool build_inputs_embeds(const std::vector<float>& audio_embeds, int alen,
-                             std::vector<float>& embeds, int& tlen) const;
+    // 构造 prefill 输入 input_ids（prefix_ids + audio_pad×alen + suffix_ids，S 尾部补 0）
+    // 返回 audio 段起始位置（= plen_）
+    int build_input_ids(int alen, std::vector<int>& ids_out, int& tlen) const;
 };
 
 }  // namespace asr

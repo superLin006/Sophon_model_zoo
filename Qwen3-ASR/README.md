@@ -2,30 +2,54 @@
 
 [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 的 Qwen3-asr-0.6B（30 语种 + 22 中文方言的语音识别 + 语种识别）完整移植到 Sophon BM1684X，中英文转写与原生基线一致。
 
-## 🏆 当前推荐：LLM-TPU 官方工具链方案（--qwen_asr）
+## 🏆 当前推荐：HF 标准权重 + llm_convert 单 bmodel 方案
 
-**结论：官方工具链全面优于自定义 ONNX 导出方案**（体积 -51%、内存 -49%、decode +83%），
-采用 ModelScope `Qwen/Qwen3-ASR-0.6B`（qwen_asr 包版权重，thinker_config + mrope）：
+**结论：HF transformers 5.14 的 Qwen3ASR 权重（language_model 重命名为标准 Qwen3）直接走
+LLM-TPU 官方 `llm_convert.py` 标准 Qwen3 转换**，比官方 `--qwen_asr` 方案（qwen_asr 包版权重，
+thinker_config + mrope，架构不通用）更通用：**权重即 HF 原版，工具链即官方**。
+
+**两个关键点（踩坑总结）**：
+1. **必须 `--quantize w4bf16 -g 64`**（group 64）：默认 group 128 的 w4bf16 量化误差经 28 层
+   指数放大（单层 ~0.05 → layer1 差 2.0 → logits 翻转，首 token "language" 变垃圾），
+   group 64 误差减半后精度恢复；w8bf16 也可（体积 +210MB）
+2. **KV bf16 是 llm_convert 标准行为**（block_cache 的 history_k/v 即 bf16），无需 hack
+
+**encoder 用全量 3000 帧架构**（一个网络通吃离线+流式，对齐官方 Python/transformers 语义）：
+mel pad 到 3000 帧一次过 encoder（跨块窗口上下文完整，20s 长音频无漏段），按真实帧数截取
+audio tokens。流式每块全量重编码（固定 0.08s，1s 块下实时）。**chunk 独立编码（官方 bmodel 方案）
+长音频会漏段，不采用。**
 
 ```bash
-# 编译（docker sophon-tpumlir，TPU-MLIR v1.28.1）
-# 前置：pip3 install "transformers==4.57.6" "qwen-asr" "torch==2.4.1"（CPU index）
-#       权重目录不能有 .bin 文件（LlmLoad 会误当 torch 权重）
-llm_convert.py -m <qwen_asr_weights> -s 512 --max_input_length 256 \
-    --quantize w4bf16 -c bm1684x --out_dir qwen3_asr_official --qwen_asr
-
-# 上板（官方 C++ demo，板卡 python3.8 需重编 chat 模块）
-#   g++ -O2 -std=c++17 -fPIC -shared -I <pybind11_include> -I /usr/include/python3.8 \
-#       -I /opt/sophon/libsophon-current/include chat.cpp -o chat.cpython-38-aarch64-linux-gnu.so \
-#       -L /opt/sophon/libsophon-current/lib -lbmrt -lbmlib
-./qwen3_asr_demo <bmodel> <config_dir> <wav> [language]   # 官方 cpp_demo
+# 编译（docker sophon-tpumlir，TPU-MLIR v1.28.1；容器内需 torch 2.4.1 + transformers 4.57.6）
+# LLM（536MB）：标准 Qwen3 w4bf16 group64（-g 64 必加），KV bf16，seq512
+llm_convert.py -m models_llm_std -s 512 --quantize w4bf16 -g 64 -c bm1684x \
+    --out_dir qwen3_asr_std_w4g64_512
+# 全量 encoder（110MB）：3000 帧输入 + W4BF16 + 必加 --disable_layer_group
+cd compile && python export_encoder_onnx.py --model_path ../models --num_mel_frames 3000 \
+    --out_dir ./tmp/onnx_enc3000
+model_transform.py --model_name qwen3_asr_encoder --model_def tmp/onnx_enc3000/*.onnx \
+    --input_shapes [[1,128,3000]] --mlir tmp/encoder_full.mlir
+model_deploy.py --mlir tmp/encoder_full.mlir --quantize W4BF16 --chip bm1684x \
+    --disable_layer_group --model tmp/encoder_full.bmodel
+# 合并单文件（646MB，encoder + LLM 一个 bmodel）
+model_tool --combine tmp/encoder_full.bmodel qwen3_asr_std_w4g64_512/*.bmodel \
+    -o models/BM1684X/qwen3_asr_merged_w4g64.bmodel
 ```
 
-**官方 bmodel 结构**（60 网络单文件）：`audio`（chunk encoder：100 mel 帧 → 13 embeds，内置）+ `embedding` + `block_i` + `block_cache_i`（**KV bf16**）+ `lm_head`。
+**上板**（纯 bmrt C++，`cpp/`；单文件时 encoder/LLM 共享同一个 bmrt，内存单份）：
+```bash
+./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4g64.bmodel \
+    --model_dir . --audio test_data/test_zh.wav          # 离线（单文件）
+./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4g64.bmodel \
+    --model_dir . --stream --audio test_data/test_zh.wav  # 流式（全量重编码 + 全量 prefill）
+```
 
-**实测性能**（test_zh 5.6s）：audio 0.04s + prefill 0.06s + decode 64.5 tok/s → 端到端 ~0.5s（**RTF ~0.09**），FTL 97ms。
+**实测**（test_zh 5.6s）：端到端 **0.58s（RTF 0.10）**，decode **64-65 tok/s**（13~83 tokens 稳定），
+内存净占 **~1.1GB**。输出 `language Chinese<asr_text>转写`（自动语言识别，无需手动指定），
+中英德法西日六语种与原生一致。
 
-> 早期自定义方案（5.14 权重 + ONNX 导出 + 双 encoder bmodel）保留在 `compile/`、`cpp/` 作为备选与参考。
+> 注：官方 `--qwen_asr` 方案（qwen_asr 包版权重 + chunk encoder）曾做对照——其长音频会漏段且 20s 直接崩溃，
+> 已弃用（本方案与官方 Python/transformers 行为一致，转写更完整）。
 
 
 
@@ -43,113 +67,105 @@ llm_convert.py -m <qwen_asr_weights> -s 512 --max_input_length 256 \
    - 注意：5.14 的 Qwen3 带 **QK-Norm**（q_norm/k_norm 权重）
 4. 生成：audio embeds 替换 `<|audio_pad|>`(151676) 占位符 → 标准自回归，输出 `language <NAME><asr_text>`，eos=[151643,151645]
 
-## 移植方案（Eureka-Audio 同款路线）
+## 移植方案（HF 标准权重 + llm_convert 单 bmodel）
 
-**关键点：LLM 用 inputs_embeds 版 bmodel**（prefill 直接吃拼好的连续向量），
-不能用 llm_convert.py 标准 token-id 版（audio embeds 是连续向量，无法走 embedding 查表；
-且 Eureka 验证过 llm_convert.py 层融合版在 audio-embed 注入场景语义有损）。
+**关键点**：HF 5.14 的 `Qwen3ASRForConditionalGeneration.language_model` 就是标准 Qwen3-0.6B，
+把权重重命名为标准 Qwen3 布局（`model.language_model.*` → `model.*`，config `model_type=qwen3`）
+后，**直接走 LLM-TPU 官方 `llm_convert.py` 标准 Qwen3 转换**（`--qwen_asr` 是官方 qwen_asr 包版权重
+的专用分支，与 HF 权重不兼容）。audio embeds 通过 `<|audio_pad|>` 占位 token 走标准
+`input_ids` + embedding 网络（非 inputs_embeds 注入），decode 侧 KV bf16 是 llm_convert 标准行为。
 
 ### 目录结构
 
 ```
 Qwen3-ASR/
-├── compile/                     # 模型导出 + bmodel 编译
-│   ├── export_qwen3_embeds.py   # LLM 导出为 inputs_embeds 版多网络 ONNX
-│   ├── export_encoder_onnx.py   # encoder+projector 导出（固定 3000 帧窗口）
-│   ├── gen_prefix_embeds.py     # 从原生 dump 的 input_ids 自动生成 prefix/suffix embeds
-│   ├── verify_encoder_onnx.py   # ONNX 与原生数值校验（cosine）
-│   ├── recompile_qwen3.sh       # LLM bmodel 编译（W4BF16）
-│   └── recompile_encoder.sh     # encoder bmodel 编译（F16 + --disable_layer_group）
+├── compile/                     # encoder 导出 + bmodel 编译
+│   ├── export_encoder_onnx.py   # encoder+projector 导出（--num_mel_frames 3000 全量）
+│   └── recompile_encoder.sh     # encoder bmodel 编译（W4BF16 + --disable_layer_group）
 ├── python/
-│   ├── infer_native.py          # M0 原生基线 + dump（input_ids 布局 / mel / filter bank）
-│   └── infer_board.py           # sail 上板推理
+│   └── infer_native.py          # 原生基线（输出格式参照）
 ├── cpp/                         # 纯 bmrt C++ 推理（交叉编译）
 │   └── src/  (main / asr_engine / qwen_mel / tokenizer)
 ├── models/                      # 权重（不入库）+ 编译好的 bmodel
-│   ├── BM1684X/
-│   │   ├── qwen3_asr_encoder_F16.bmodel           # 363M
-│   │   └── qwen3_asr_llm_w4bf16_seq256_bm1684x.bmodel  # 1.1G（推荐：decode 35 tok/s，≤8s 音频）
-│   ├── prefix_embeds.bin / suffix_embeds.bin / mel_filters.npz / tokenizer.json
-├── test_data/                   # 测试音频（16k mono）
+│   ├── BM1684X/qwen3_asr_merged_w4g64.bmodel   # 646M（全量 encoder + LLM 合并单文件）
+│   └── prefix_ids.txt / suffix_ids.txt / mel_filters.npz / tokenizer.json
+├── models_llm_std/              # llm_convert 编译权重（重命名版，不入库，.gitignore）
+├── test_data/                   # 测试音频（16k mono，13 个）
 └── deploy_to_board.sh           # 一键部署 + 测试
 ```
 
-### 编译 bmodel（主机，一次性）
+### 编译权重准备（models_llm_std/）
+
+`models_llm_std/` 是 llm_convert 编译用的**标准 Qwen3 权重**（HF 5.14 的 Qwen3ASR 权重重命名而来，
+不入库，.gitignore 忽略）。**从 HF 原版权重（`models/`）重建**：
+```bash
+cd compile && python make_models_llm_std.py   # 从 ../models 生成 ../models_llm_std
+```
+改动只有两处（脚本自动完成）：
+1. **权重键去 `model.language_model.` 前缀**（`model.language_model.layers.*` → `model.layers.*`；
+   audio_tower / multi_modal_projector 键丢弃，LLM 编译不需要）
+2. **config.json 的 `model_type` 改 `qwen3`、`architectures` 改 `Qwen3ForCausalLM`**
+
+### 编译 bmodel（一次性，docker sophon-tpumlir，TPU-MLIR v1.28.1）
 
 ```bash
-# 环境：qwen3-asr conda env（transformers>=5.13.0, torch, onnx）
-# docker sophon-tpumlir（TPU-MLIR v1.28.1）
+# 容器环境：torch 2.4.1 + transformers 4.57.6（缺 qwen3 识别会 KeyError）
 
-# 1. LLM 导出 + 编译（28+28 层，W4BF16，不加 --disable_layer_group；seq 用 1024 性能最佳）
-cd compile && python export_qwen3_embeds.py --model_path ../models --seq_length 256 --out_dir ./tmp/onnx_seq256
-docker exec sophon-tpumlir bash -c 'cd /workspace/Qwen3-ASR/compile && bash recompile_qwen3.sh'
+# 1. LLM（536MB）：标准 Qwen3 w4bf16 group64（-g 64 必加，group 128 精度不足），KV bf16 自动
+llm_convert.py -m models_llm_std -s 512 --quantize w4bf16 -g 64 -c bm1684x \
+    --out_dir qwen3_asr_std_w4g64_512
 
-# 2. encoder 导出 + 编译（F16，必加 --disable_layer_group）
-python export_encoder_onnx.py --model_path ../models
-python verify_encoder_onnx.py  # cosine > 0.999
-docker exec sophon-tpumlir bash -c 'cd /workspace/Qwen3-ASR/compile && bash recompile_encoder.sh'
+# 2. 全量 encoder（110MB）：3000 帧输入 + W4BF16 + 必加 --disable_layer_group（离线/流式通吃）
+cd compile && python export_encoder_onnx.py --model_path ../models --num_mel_frames 3000 \
+    --out_dir ./tmp/onnx_enc3000
+model_transform.py --model_name qwen3_asr_encoder --model_def tmp/onnx_enc3000/qwen3_asr_encoder.onnx \
+    --input_shapes [[1,128,3000]] --mlir tmp/encoder_full.mlir
+model_deploy.py --mlir tmp/encoder_full.mlir --quantize W4BF16 --chip bm1684x \
+    --disable_layer_group --model tmp/encoder_full.bmodel
 
-# 3. 生成 prefix/suffix embeds（先跑原生推理得到 dump）
-python infer_native.py --audio ../test_data/test_zh.wav --out_prefix baseline_zh
-python gen_prefix_embeds.py --dump_json ../python/dump/baseline_zh_inputs.json
+# 3. 合并单文件（646MB）
+model_tool --combine tmp/encoder_full.bmodel qwen3_asr_std_w4g64_512/*.bmodel \
+    -o models/BM1684X/qwen3_asr_merged_w4g64.bmodel
 ```
 
 ### 上板运行
 
 ```bash
-bash deploy_to_board.sh --test   # 部署 + python/sail 测试
-
-# C++（先交叉编译）
-bash cpp/build.sh                # sophon-cross-build 容器内编译
-bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
-# 板上：
-./qwen3_asr_bm1684x --encoder_bmodel models/BM1684X/qwen3_asr_encoder_F16.bmodel \
-    --qwen3_bmodel models/BM1684X/qwen3_asr_llm_w4bf16_seq256_bm1684x.bmodel \
+bash cpp/build.sh                # sophon-cross-build 容器内交叉编译
+bash deploy_to_board.sh          # 一键部署 + 测试
+# 板上（单文件 bmodel）：
+./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4g64.bmodel \
     --model_dir . --audio test_data/test_zh.wav
 ```
 
 ## 上板测试结果（BM1684X SoC，172.16.25.248）
 
-### 三端输出对比
+### 测试结果（test_data 全部 13 个音频，C++ bmrt 上板实测，2026-08-10，seq512）
 
-| 音频 | 原生 transformers (CPU) | python/sail 上板 | C++ bmrt 上板 |
-|------|------------------------|------------------|---------------|
-| test_zh (5.6s) | `language Chinese<asr_text>对我做了介绍啊。那么我想说的是呢，大家如果对我的研究感兴趣呢。` | `language Chinese<asr_text>对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢。` | `language Chinese对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢。` |
-| test_en (5.9s) | `language English<asr_text>Mr. Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.` | 同左（逐字一致） | `language EnglishMr. Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.`（`<asr_text>` 被 C++ tokenizer 跳过） |
+| 音频 | 语种 | 时长 | 离线端到端 | 离线 RTF | 流式 Final |
+|------|------|------|-----------|----------|------------|
+| short_05s.wav | 中文 | 0.5s | 0.27s | 0.54 | ✅ `对。`（不吞） |
+| short_1s.wav | 中文 | 1.0s | 0.31s | 0.31 | ✅ `对我做了介绍。` |
+| test_ja.wav | 日语 | 4.7s | 0.45s | 0.096 | ✅ `すみません。駅はどこですか。` |
+| test_de.wav | 德语 | 5.8s | 0.51s | 0.088 | ✅ `Entschuldigung, fährt der Zug nach Berlin.` |
+| test_zh.wav | 中文 | 5.6s | 0.58s | 0.104 | ✅ `对我做了介绍啊，那么我想说的是呢，大家如果对我的研究感兴趣呢。` |
+| test_en.wav | 英语 | 5.9s | 0.65s | 0.110 | ✅ `Mr. Quilter is the apostle of the middle classes...` |
+| test_fr.wav | 法语 | 11.2s | 0.84s | 0.075 | ✅ `Bonjour les amis et bienvenue...` |
+| en_long_1_16k.wav | 英语 | 10.5s | 0.93s | 0.089 | ✅ `Saffon Bremax is a high-performance AI inference chip...` |
+| test_es.wav | 西语 | 16.0s | 0.98s | 0.061 | ✅ `Y hoy me gustaría hacer una excursión...` |
+| test_en_p1.wav | 英语 | 28.8s | 1.14s | 0.040 | ✅ `Everyone, I'm Amanda, and I'm 25 years old...` |
+| zh_long_1_16k.wav | 中文 | 19.9s | 1.53s | 0.077 | ✅ `语音合成技术经过多年发展，已经从早期的拼接式合成...` |
+| test_en_p2.wav | 英语 | 28.8s | 1.85s | 0.064 | ✅ `Let's chat about this together...` |
+| test_zh_18s.wav | 中文 | 18.1s | 2.28s | 0.126 | ✅ `如果说这个全国第一城市，上一次遭受的同类危机...` |
 
-语种识别 Chinese/English 全部正确；转写仅 w4bf16 量化导致个别标点差异（原生"啊。" vs 上板"啊，"）。
+**Token 生成速度（多次运行稳定，波动 <1%）**：13~83 tokens 全覆盖 **64-65 tok/s**（与生成长度/KV 长度无关）。
 
-### 性能（C++ 版，板上实测，test_zh 5.6s / test_en 5.9s）
+**流式**：1s 起输出中间结果并逐步修订（`Every.` → `Everyone, I'm.` → ... → 完整），**Final 与离线逐字一致**；
+每块 RTF 0.28-0.99（实时，含 28.8s 长音频）；0.5s 超短语音由 finish 兜底不吞。
 
-| 版本 | mel | encoder | prefill | decode | 端到端 | RTF |
-|------|-----|---------|---------|--------|--------|-----|
-| 初版（朴素 DFT mel + seq2048） | 5.15s | 0.08s | 2.61s | 8.1 tok/s | 10.44s | 1.88 |
-| FFT mel + seq2048 | 0.09s | 0.08s | 2.57s | 8.1 tok/s | 5.33s | 0.95 |
-| FFT mel + seq1024 + 基础 prefill | 0.10s | 0.08s | 1.02s | 14.1 tok/s | 2.68s | 0.48 |
-| FFTW mel + seq512 + prefill 优化 | 0.09s | 0.08s | 0.17s | 23.0 tok/s | 1.26s | 0.23 |
-| **FFTW mel + seq256（自定义方案）** | 0.09s | 0.08s | 0.08s | 35.3 tok/s | 0.85s | 0.15 |
-| **官方工具链（当前推荐，--qwen_asr）** | 0.09s | **0.04s** | **0.06s** | **64.5 tok/s** | **~0.5s** | **~0.09** |
+**内存**：NPU heap 净占用 **~1.1GB**（646MB bmodel + 运行时 KV/激活；devmem 3.78GB 为全板卡统计，含其他进程）。
 
-**优化历程**
-1. **mel 提速 57 倍**（5.15s → 0.09s）：朴素 DFT → FFT（最终用 **FFTW3**，1_third_party 现成库，chatTTS 同款）
-2. **seq 重编**（2048 → 512/1024）：decode 8.1 → 22.7 tok/s（KV 传输量 ∝ seq：448MB/步 → 112MB/步）
-3. **prefill ping-pong 优化**（2.61s → 0.17s）：hidden device 内接力 + pos/mask 复用 + KV d2d 免 host 中转；
-   seq512 的 mask 仅 1MB（seq 越小 attention 无效计算越少）
-4. **tokenizer 换现成 tokenizers-cpp**（1_third_party，QwenLLM 同款），删除手写 BPE
-5. **seq 缩减到 256**（decode 23 → 35.3 tok/s）：KV 传输 112MB → 56MB/步 + attention 计算减半；
-   代价是音频上限降到 ~8s（prefix 9 + audio 104 + 6 + 生成 ≤ 256）——短音频/流式场景最优
-
-> **多核编译验证结论**：`model_deploy.py --num_core 8` 对 LLM block 不生效（bmodel core num 仍为 1，
-> LLM-TPU 的"多芯"是 --num_device 多卡方案，非单卡多核）；BM1684X 单卡 LLM matmul 多核切分收益有限。
-
-**与仓库其他 ASR 模型对比（RTF 越小越好，<1 即实时）**
-
-| 模型 | RTF | 端到端（~5.6s 音频） | 特点 |
-|------|-----|---------------------|------|
-| SenseVoice Small F16 | 0.0094 | 53ms | CTC 非自回归，最快 |
-| Moonshine streaming-small | 0.045 | 296ms | 轻量英文流式 |
-| Whisper turbo W4F16 | 0.343 | 2.4s | 多语言，自回归 |
-| **Qwen3-ASR-0.6B（本移植）** | **0.09** | **~0.5s** | LLM 类 ASR，30 语种 + 22 方言 + 语种识别（官方工具链，FTL 97ms） |
+> **长音频限制**：encoder 固定 3000 mel 帧 = **30s 硬上限**（wav_to_mel 拒绝 >30s），KV（512 槽）不是瓶颈；超限明确报错（真实场景 VAD 切分一般 < 30s）。
 
 ## 关键经验与坑
 
@@ -172,44 +188,62 @@ bash deploy_to_board.sh          # 重新部署（含 C++ 二进制）
    但 **不要直接操作 `stages[0].input_mems`**（真实数据下会卡死板卡，Eureka 同款教训）
 9. **decode mask**：mask 长度 SEQ+1，0..pos-1 可见、pos..SEQ-1 屏蔽无效槽位、
    **SEQ 位（本次新 key）保持 0 可见**；position_id = token_length（修正 Eureka 的 off-by-one）
-10. **优先用 1_third_party 现成库**：tokenizer 用 tokenizers-cpp（QwenLLM 同款，
+10. **bmrt_launch_tensor_ex 是异步的**：最后两个参数是 user_mem/user_stmode（不是 is_sync！），
+    **每层 launch 后必须 bm_thread_sync**，否则读到 TPU 输出缓冲初始 0x7fff（bf16 NaN）或残留 → 输出垃圾；
+    层间 d2d（异步 DMA）后、再 launch 前也要 sync
+11. **层间 d2d 必须直接写到下一层 in0**（`net_blocks_[i+1]->input_mems[0]`，QwenEngine 同款）；
+    写到中转 buffer 不会生效（下一层读自己的 in0 是未初始化残留）→ layer1+ 全错
+12. **各层 pos/mask 输入共享同一块 input_mem**（addr mode 1 下地址相同，已验证），只传一次即可；
+    block 输入顺序 input_states(bf16)/position_ids(int32)/attention_mask(bf16)
+13. **w4bf16 必须 `-g 64`**（llm_convert 默认 group 128）：0.6B 模型 4bit 量化误差（单层 ~0.05）
+    经 28 层 attention/FFN 指数放大（layer1 就差 2.0）→ logits 翻转首 token；
+    group 64 误差减半后精度恢复；w8bf16 也可（+210MB）。先本地噪声模拟验证量化方案再编译
+14. **位置 0 输出爆炸**（hidden 值 5376+）：causal mask 下位置 0 只看自己，是模型固有行为
+    （HF 原生同样），不影响生成（lm_head 用最后一个 token）
+15. **优先用 1_third_party 现成库**：tokenizer 用 tokenizers-cpp（QwenLLM 同款，
     C API `tokenizers_decode` 支持 skip_special_token，需同时链接 libtokenizers_cpp.a + libtokenizers_c.a）；
     FFT 可考虑 kissfft/FFTW（aarch64 静态库）——本项目手写 radix-2 FFT 已达标（mel 0.1s）未替换
 
 ## 流式推理（--stream 模式）
 
-对齐官方（qwen-asr 的 streaming API：1s chunk + 5s 重编码窗口 + 延迟修正）：
+流式（无 VAD）：音频持续灌入 + 模型持续吐字修订，`stream_finish` 定稿（音频流结束/静音检测后调用）。
 
 ```bash
-# 板上：按 2s 块喂音频（2s 更新的处理耗时 ~1.7s ≤ 2s → 实时）
-./qwen3_asr_bm1684x --encoder_bmodel models/BM1684X/qwen3_asr_encoder_F16.bmodel \
-    --qwen3_bmodel models/BM1684X/qwen3_asr_llm_w4bf16_seq256_bm1684x.bmodel \
-    --model_dir . --stream \
-    --stream_encoder models/BM1684X/qwen3_asr_encoder_w500_F16.bmodel \
-    --audio test_data/test_zh.wav
+./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4g64.bmodel \
+    --model_dir . --stream --audio test_data/test_zh.wav
 ```
 
-实测（test_zh 5.6s，1s 块 + seq256 + 官方 32 token + mel 增量）：
+实测（test_zh 5.6s，1s 块 + seq512 LLM）：
 ```
-[ 1.1s] !!!!!...   (proc 1.04s | RTF 1.04)   ← 早期块满 32 token（语义未完整，未定稿可修订）
-[ 2.1s] !!!!!...   (proc 1.04s | RTF 1.04)
-[ 2.9s] language Chinese<asr_text>对我做了介绍啊。那么...   (proc 0.72s | RTF 0.72)   ← EOS 早停，消化积压
-[Final] language Chinese<asr_text>对我做了介绍啊，那么...  ← 定稿与基线一致
+[ 0.3s] language English<asr_text>Every.                     (audio 1.0s | proc 0.28s | RTF 0.28)
+[ 1.3s] language English<asr_text>Everyone, I'm.             (audio 2.0s | proc 0.99s | RTF 0.99)
+[ 2.0s] language English<asr_text>Everyone, I'm Amanda, and I.  (audio 3.0s | proc 0.75s | RTF 0.75)
+...（逐步修订增长）
+[Final] language English<asr_text>Everyone, I'm Amanda, and I'm 25 years old...  ← 定稿与离线一致
 ```
 
-**实时性实测（官方配置：1s 块 + 32 token）**：**平均 RTF 0.64（zh）/ 0.65（en）< 1 实时**——
-早期块（语义未完整）满 32 token 略超（RTF 1.04），后续块 EOS 早停快（0.72-0.84s）消化积压，
-流水线稳态实时（真实流式无累积延迟）。mel 增量：只算新帧 FFT + 全局重裁剪（长音频收益大）。
+**实时性**：每块 RTF 0.28-0.99 < 1 全程实时（含 28.8s 长音频）；中间结果随音频增长修订
+（"延迟修正"行为），Final 与离线逐字一致。**1s 起输出**（官方 Python 实测 1s 可转写、0.5s 破碎），
+更短语音由 finish 兜底不吞。
 
-**机制**（对齐官方）：
-- 音频按 chunk 累积（100 mel 帧 = 1s），update 时用**窗口 encoder（500 帧 = 5s，`qwen3_asr_encoder_w500_F16.bmodel`）**重编码最近 5s（跨 chunk 上下文 + 未固化修正）
-- 累积 audio tokens（旧帧固定 + 新窗口替换）→ LLM prefill + 短生成（32 token）→ 中间转写
-- `stream_finish()` 用**离线 encoder 全量重编码**定稿（精度与离线版一致）
+**机制**（对齐官方 Python/transformers 语义）：
+- 每块全量 mel（pad 到 3000 帧）重编码（固定 0.08s）→ 按真实帧数截取 audio tokens（mel_frames_to_tokens）
+- 全量 prefill + 短生成（32 token）→ 中间转写；`stream_finish()` 与 update 同一路径全量定稿
+- **分段定稿（无限持续流式）**：audio tokens 将超 KV 上限（留 128 槽给生成，约每 28s 一段）时
+  **自动定稿当前段（完整生成）→ 追加到历史（stream_partial_text_）→ 重置 mel/samples → 继续**；
+  update/finish 返回"历史 + 当前段"，调用方无感知。实测 57.6s 音频自动切 3 段全部转写、
+  段间无内容丢失。官方 demo（pipeline.py）是 KV 满直接 clear_history 丢进度，本方案更优
+- **段边界静音对齐**：分段点双向搜索 ±1.5s 内最近静音（mel log10 帧均值 < -7 判静音），
+  避免截断在词中间——说话有停顿时段边界自然衔接（实测拼接处插入 1s 静音后，段2 开头
+  从 "And let's chat" 变为 "Let's chat"）；持续语音无静音则原样截断（可接受）
 
 **C++ API**（asr_engine.h）：`init_stream() / stream_push(samples, n) / stream_update() / stream_finish()`
 
 ## 局限
 
-- 离线：音频 ≤ 30s（encoder 固定 3000 mel 帧）；长音频需分块（块间无上下文，Eureka 同款限制）
-- 流式：中间结果会随音频增长修订（官方同款"延迟修正"行为）；<3s 不输出；2s 更新频率下实时
-- 输入要求 16k mono wav（C++ 侧未实现重采样）
+- **音频长度**：**30s 硬上限**（encoder 固定 3000 mel 帧）；超限明确报错（真实场景 VAD 切分一般 < 30s）
+- 流式：中间结果会随音频增长修订（"延迟修正"行为）；**<1s 不输出中间结果**（官方 Python 实测
+  1s 可转写、0.5s 破碎），更短语音由 finish 兜底（不吞）；1s 块下全程实时（RTF < 1）
+- **流式无 VAD**：音频持续灌入 + 模型持续吐字修订（`stream_update`），定稿由 `stream_finish`
+  （音频流结束/静音检测后调用）；VAD 属于离线整段场景的句子边界判断，与流式无关
+- 输入要求 **16k mono wav**（C++ 侧未实现重采样）
