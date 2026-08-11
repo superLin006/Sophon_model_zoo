@@ -5,12 +5,17 @@
 #include <cstring>
 #include <vector>
 #include <fstream>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
 
 static void print_usage(const char* prog) {
     std::cerr << "Usage: " << prog << " [options]\n"
               << "  --model-dir    <dir>   bmodels + assets directory (default: ../models)\n"
               << "  --text         <text>  text to synthesize\n"
               << "  --output       <file>  output wav file (default: output.wav)\n"
+              << "  --batch-file   <file>  synthesize non-comment lines with one model load\n"
+              << "  --output-dir   <dir>   batch WAV/manifest output directory\n"
               << "  --spk-emb      <file>  speaker embedding binary (float32, 768 values)\n"
               << "  --speed        <1-9>   speaking speed (default: 5)\n"
               << "  --temp         <val>   sampling temperature (default: 0.0001)\n"
@@ -25,6 +30,8 @@ int main(int argc, char* argv[]) {
     std::string text       = "大家好，我是一个文本转语音模型，专为对话场景设计。";
     std::string output     = "output.wav";
     std::string spk_file;
+    std::string batch_file;
+    std::string output_dir = "batch_output";
     int   speed        = 5;
     float temp         = 0.0001f;
     int   tpu_id       = 0;
@@ -37,6 +44,8 @@ int main(int argc, char* argv[]) {
         else if (!std::strcmp(argv[i], "--text")         && i+1 < argc) text         = argv[++i];
         else if (!std::strcmp(argv[i], "--output")       && i+1 < argc) output       = argv[++i];
         else if (!std::strcmp(argv[i], "--spk-emb")      && i+1 < argc) spk_file     = argv[++i];
+        else if (!std::strcmp(argv[i], "--batch-file")   && i+1 < argc) batch_file   = argv[++i];
+        else if (!std::strcmp(argv[i], "--output-dir")   && i+1 < argc) output_dir   = argv[++i];
         else if (!std::strcmp(argv[i], "--speed")        && i+1 < argc) speed        = std::stoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--temp")         && i+1 < argc) temp         = std::stof(argv[++i]);
         else if (!std::strcmp(argv[i], "--tpu-id")       && i+1 < argc) tpu_id       = std::stoi(argv[++i]);
@@ -79,6 +88,38 @@ int main(int argc, char* argv[]) {
     params.temperature   = temp;
     params.speed         = speed;
     params.max_new_token = max_token;
+
+    if (!batch_file.empty()) {
+        std::ifstream input(batch_file);
+        if (!input) {
+            std::cerr << "Error: cannot open batch file: " << batch_file << "\n";
+            return 1;
+        }
+        std::filesystem::create_directories(output_dir);
+        std::ofstream manifest(std::filesystem::path(output_dir) / "manifest.tsv");
+        manifest << "id\twav\ttext\n";
+        std::string line;
+        int index = 0;
+        int failed = 0;
+        while (std::getline(input, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            const auto first = line.find_first_not_of(" \t");
+            if (first == std::string::npos || line[first] == '#') continue;
+            line.erase(0, first);
+            std::ostringstream name;
+            name << std::setw(4) << std::setfill('0') << ++index << ".wav";
+            const auto path = std::filesystem::path(output_dir) / name.str();
+            const auto samples = tts.infer(line, params);
+            const bool saved = !samples.empty() && ChatTTS::save_wav(path.string(), samples);
+            if (!saved) ++failed;
+            manifest << index << '\t' << name.str() << '\t' << line << '\n';
+            manifest.flush();
+            std::cout << "[batch " << index << "] " << (saved ? "OK" : "FAIL")
+                      << " " << path << "\n";
+        }
+        std::cout << "Batch complete: total=" << index << " failed=" << failed << "\n";
+        return failed == 0 && index > 0 ? 0 : 1;
+    }
 
     std::vector<float> pcm;
     auto t2 = std::chrono::steady_clock::now();
