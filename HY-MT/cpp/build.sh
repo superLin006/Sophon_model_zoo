@@ -1,11 +1,11 @@
 #!/bin/bash
-# Qwen3 BM1684X 纯 C++ Demo 交叉编译脚本
+# HY-MT BM1684X 纯 C++ Demo 交叉编译脚本
 #
 # 推荐在 3_docker/ 的 cross-build docker 中运行（Ubuntu 20.04，glibc 2.31）：
-#   cd /workspace/QwenLLM/cpp && ./build.sh
+#   cd /workspace/HY-MT/cpp && ./build.sh
 #
 # 用法:
-#   ./build.sh              # 编译，产物在 build/qwen_demo
+#   ./build.sh              # 编译，产物在 build-aarch64-v2/hymt_demo
 #   ./build.sh install      # 编译 + 安装到 dist/（含 .so，方便 scp 到板卡）
 
 set -e
@@ -34,13 +34,13 @@ cmake -S "${SCRIPT_DIR}" \
 cmake --build "${BUILD_DIR}" -j"$(nproc)"
 
 if [[ "${1:-}" == "install" ]]; then
+    rm -rf "${DIST_DIR}"
     mkdir -p "${DIST_DIR}/lib"
     cp "${BUILD_DIR}/hymt_demo" "${DIST_DIR}/"
     SOPHON_SDK="${SCRIPT_DIR}/../../0_Toolkits/soc-sdk-sp4"
-    cp "${SOPHON_SDK}/lib/libbmrt.so"   "${DIST_DIR}/lib/"
-    cp "${SOPHON_SDK}/lib/libbmrt.so.1.0" "${DIST_DIR}/lib/" 2>/dev/null || true
-    cp "${SOPHON_SDK}/lib/libbmlib.so"  "${DIST_DIR}/lib/"
-    cp "${SOPHON_SDK}/lib/libbmlib.so.0" "${DIST_DIR}/lib/" 2>/dev/null || true
+    for lib in libbmrt.so libbmrt.so.1.0 libbmlib.so libbmlib.so.0; do
+        cp "${SOPHON_SDK}/lib/${lib}" "${DIST_DIR}/lib/" 2>/dev/null || true
+    done
     echo ""
     echo "✅ 安装完成: ${DIST_DIR}"
     echo "   上板部署: scp -r ${DIST_DIR}/* root@<board_ip>:/data/qwen_demo/"

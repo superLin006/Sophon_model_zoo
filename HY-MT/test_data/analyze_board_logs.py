@@ -31,6 +31,9 @@ def parse_log(path: Path) -> dict:
 
 
 def summarize(values: list[float]) -> dict:
+    # M7：空列表防护（用例崩溃/无输出时不应崩掉整个脚本）
+    if not values:
+        return {"count": 0, "mean": 0.0, "median": 0.0, "min": 0.0, "max": 0.0, "stdev": 0.0}
     return {
         "count": len(values),
         "mean": statistics.fmean(values),
@@ -61,8 +64,15 @@ def main() -> None:
         decode = []
         for board_id, result in cases.items():
             baseline_id = ALIASES.get(board_id, board_id)
+            reference = baseline.get(baseline_id)
+            if not result["outputs"]:
+                comparisons.append({"id": baseline_id, "no_output": True})
+                continue
             output = result["outputs"][0]
-            reference = baseline[baseline_id]
+            if reference is None:
+                # M7：61 用例中 45 个扩展用例无 baseline 参考，标记跳过而非崩溃
+                comparisons.append({"id": baseline_id, "no_reference": True, "output": output})
+                continue
             comparisons.append({
                 "id": baseline_id,
                 "exact_match": output == reference,
@@ -73,7 +83,7 @@ def main() -> None:
             prefill.extend(result["prefill_ms"])
             decode.extend(result["decode_tps"])
         report["variants"][variant] = {
-            "exact_matches": sum(item["exact_match"] for item in comparisons),
+            "exact_matches": sum(item.get("exact_match", False) for item in comparisons),
             "case_count": len(comparisons),
             "mean_character_similarity": statistics.fmean(
                 item["character_similarity"] for item in comparisons
@@ -85,7 +95,9 @@ def main() -> None:
 
     w8_decode = report["variants"]["w8bf16"]["decode_tokens_per_second"]["mean"]
     w4_decode = report["variants"]["w4bf16_g64"]["decode_tokens_per_second"]["mean"]
-    report["w4_decode_speedup_percent"] = (w4_decode / w8_decode - 1.0) * 100.0
+    report["w4_decode_speedup_percent"] = (
+        (w4_decode / w8_decode - 1.0) * 100.0 if w8_decode > 0 else 0.0
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({

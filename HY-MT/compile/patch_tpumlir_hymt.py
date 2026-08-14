@@ -22,8 +22,11 @@ def patch_file(path: Path, replacements: list[tuple[str, str]]) -> None:
         if new in text:
             continue
         count = text.count(old)
-        if count == 0:
-            raise RuntimeError(f"Patch anchor not found in {path}: {old[:100]!r}")
+        # L7：锚点必须恰好出现一次，出现多次时 replace 会误伤其他代码
+        if count != 1:
+            raise RuntimeError(
+                f"Patch anchor count={count} (expect 1) in {path}: {old[:100]!r}"
+            )
         text = text.replace(old, new)
         changed = True
     if changed:

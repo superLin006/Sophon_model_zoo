@@ -27,6 +27,7 @@ static std::string build_prompt(const std::string& user_text)
 
 static void expand_escaped_newlines(std::string& text)
 {
+    // 仅展开命令行里显式写出的 \n 转义序列（如 '...\n\n...'）
     size_t pos = 0;
     while ((pos = text.find("\\n", pos)) != std::string::npos) {
         text.replace(pos, 2, "\n");
@@ -44,26 +45,50 @@ int main(int argc, char** argv)
     std::string model_dir = argv[1];
     std::string user_text = argv[2];
     expand_escaped_newlines(user_text);
-    int max_new_tokens = argc > 3 ? std::stoi(argv[3]) : 128;
+    int max_new_tokens = 128;
+    if (argc > 3) {
+        try {
+            max_new_tokens = std::stoi(argv[3]);
+        } catch (...) {
+            std::cerr << "Invalid max_new_tokens: " << argv[3] << "\n";
+            return 1;
+        }
+    }
     if (!model_dir.empty() && model_dir.back() != '/') model_dir += '/';
 
     std::string bmodel_path;
-    for (const auto& entry : fs::directory_iterator(model_dir)) {
-        if (entry.path().extension() == ".bmodel") {
-            bmodel_path = entry.path().string();
-            break;
+    int         n_bmodel = 0;
+    try {
+        for (const auto& entry : fs::directory_iterator(model_dir)) {
+            if (entry.path().extension() == ".bmodel") {
+                if (n_bmodel == 0) bmodel_path = entry.path().string();
+                n_bmodel++;
+            }
         }
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "Cannot open model_dir: " << model_dir << "\n";
+        return 1;
     }
-    if (bmodel_path.empty()) throw std::runtime_error("No bmodel in " + model_dir);
+    if (bmodel_path.empty()) {
+        std::cerr << "No bmodel in " << model_dir << "\n";
+        return 1;
+    }
+    if (n_bmodel > 1) {
+        std::cerr << "Warning: " << n_bmodel << " bmodels in " << model_dir
+                  << ", using " << bmodel_path << "\n";
+    }
     auto tokenizer = tokenizers::Tokenizer::FromBlobJSON(
         read_file(model_dir + "config/tokenizer.json"));
 
     auto encoded = tokenizer->Encode(build_prompt(user_text));
     std::vector<int> input_ids(encoded.begin(), encoded.end());
+    // EOS 与 tokenizer_config.json 的 eos_token 一致（<｜hy_place▁holder▁no▁2｜>）。
+    // 注意：Decode(ids) 无 skip_special_tokens 参数（tokenizers-cpp 限制），
+    // 若模型生成其他特殊 token 会以原文输出——与 PyTorch baseline
+    // （skip_special_tokens=True）有差异。当前模型除 EOS 外不生成特殊 token。
     const int eos = tokenizer->TokenToId("<｜hy_place▁holder▁no▁2｜>");
 
     QwenEngine engine;
-    engine.generation_mode = "greedy";
     engine.init({0}, bmodel_path);
 
     using clock = std::chrono::steady_clock;

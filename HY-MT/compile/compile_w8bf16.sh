@@ -13,3 +13,9 @@ llm_convert.py \
   -c bm1684x \
   --out_dir "${OUT_DIR}"
 
+# L6：产物存在性检查（llm_convert 失败时尽早报错）
+if ! ls "${OUT_DIR}"/*.bmodel >/dev/null 2>&1; then
+    echo "[FAIL] bmodel 未生成: ${OUT_DIR}"
+    exit 1
+fi
+echo "[OK] ${OUT_DIR}/*.bmodel"

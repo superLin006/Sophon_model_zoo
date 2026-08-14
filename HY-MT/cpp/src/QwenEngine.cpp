@@ -1,10 +1,10 @@
 #include "QwenEngine.h"
 
 #include <algorithm>
-#include <cassert>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <numeric>
-#include <random>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -50,23 +50,15 @@ void QwenEngine::init_by_names()
     net_embed       = bmrt_get_network_info(p_bmrt, "embedding");
     net_embed_cache = bmrt_get_network_info(p_bmrt, "embedding_cache");
     net_lm          = bmrt_get_network_info(p_bmrt, "lm_head");
+    if (!net_embed || !net_embed_cache || !net_lm) {
+        throw std::runtime_error("[QwenEngine] bmodel 缺网络 embedding/embedding_cache/lm_head");
+    }
 
     const char** net_names = nullptr;
     int          num_nets  = bmrt_get_network_number(p_bmrt);
     bmrt_get_network_names(p_bmrt, &net_names);
 
-    net_greedy_head = nullptr;
-    net_sample_head = nullptr;
-    int num_blocks  = num_nets - 3; // embed, embed_cache, lm_head
-
-    if (is_exist("greedy_head", net_names, num_nets)) {
-        net_greedy_head = bmrt_get_network_info(p_bmrt, "greedy_head");
-        num_blocks--;
-    }
-    if (is_exist("sample_head", net_names, num_nets)) {
-        net_sample_head = bmrt_get_network_info(p_bmrt, "sample_head");
-        num_blocks--;
-    }
+    int num_blocks = num_nets - 3; // embed, embed_cache, lm_head
 
     lmhead_with_topk = net_lm->stages[0].output_shapes[0].dims[1] == 1;
 
@@ -97,71 +89,101 @@ void QwenEngine::init_by_names()
                                  "(block_0/block_cache_0 missing)");
     }
 
-    MAX_INPUT_LENGTH   = net_embed->stages[0].input_shapes[0].dims[1];
-    SEQLEN             = net_blocks_cache[0]->stages[0].input_shapes[3].dims[1];
-    support_prefill_kv = net_blocks[0]->input_num == 5;
-    history_length     = 0;
+    MAX_INPUT_LENGTH = net_embed->stages[0].input_shapes[0].dims[1];
+    SEQLEN           = net_blocks_cache[0]->stages[0].input_shapes[3].dims[1];
+    history_length   = 0;
 
-    if (support_prefill_kv) {
-        PREFILL_KV_LENGTH = net_blocks[0]->stages[0].input_shapes[3].dims[1];
+    // M8：net_launch_decode 用 block_cache_0 的 position/mask 缓冲给所有层（launch 时
+    // 以 in_t 传入的 device_mem 为准，各层自身 input_mems 地址可以不同），因此这里
+    // 校验的是各层 shape 一致而非地址相同；shape 不一致会静默错数据，提前报错。
+    const auto& base = net_blocks_cache[0]->stages[0];
+    for (int i = 1; i < NUM_LAYERS; i++) {
+        const auto& s = net_blocks_cache[i]->stages[0];
+        if (s.input_shapes[1].dims[0] != base.input_shapes[1].dims[0] ||
+            s.input_shapes[2].dims[3] != base.input_shapes[2].dims[3]) {
+            throw std::runtime_error(
+                "[QwenEngine] block_cache position/mask shape 不一致（工具链约定破坏）");
+        }
+    }
+    is_same_addr = true;
+    for (int i = 0; i < NUM_LAYERS; i++) {
+        const auto& s = net_blocks[i]->stages[0];
+        if (i == 0) {
+            is_same_addr = s.input_mems[0].u.device.device_addr ==
+                           s.output_mems[0].u.device.device_addr;
+        } else if (s.input_mems[0].u.device.device_addr !=
+                   net_blocks[i - 1]->stages[0].output_mems[0].u.device.device_addr) {
+            is_same_addr = false;  // 层间非直连，每层都需 d2d
+        }
     }
 }
 
 void QwenEngine::init(const std::vector<int>& devices, const std::string& model_path)
 {
-    for (auto d : devices) {
-        bm_handle_t h;
-        bm_status_t s = bm_dev_request(&h, d);
-        assert(BM_SUCCESS == s);
-        handles.push_back(h);
-    }
-    bm_handle = handles[0];
+    try {
+        for (auto d : devices) {
+            bm_handle_t h;
+            bm_status_t s = bm_dev_request(&h, d);
+            if (BM_SUCCESS != s) {
+                throw std::runtime_error("[QwenEngine] bm_dev_request failed: " +
+                                         std::to_string(d));
+            }
+            handles.push_back(h);
+        }
+        bm_handle = handles[0];
 
 #ifdef SOC_TARGET
-    p_bmrt = bmrt_create(handles[0]);
+        p_bmrt = bmrt_create(handles[0]);
 #else
-    p_bmrt = bmrt_create_ex(handles.data(), static_cast<int>(handles.size()));
+        p_bmrt = bmrt_create_ex(handles.data(), static_cast<int>(handles.size()));
 #endif
-    assert(p_bmrt != nullptr);
-    bmrt_set_flags(p_bmrt, BM_RUNTIME_SHARE_MEM);
+        if (p_bmrt == nullptr) {
+            throw std::runtime_error("[QwenEngine] bmrt_create failed");
+        }
+        bmrt_set_flags(p_bmrt, BM_RUNTIME_SHARE_MEM);
 
-    bool ok = bmrt_load_bmodel(p_bmrt, model_path.c_str());
-    if (!ok) {
-        throw std::runtime_error("[QwenEngine] Failed to load bmodel: " + model_path);
+        bool ok = bmrt_load_bmodel(p_bmrt, model_path.c_str());
+        if (!ok) {
+            throw std::runtime_error("[QwenEngine] Failed to load bmodel: " + model_path);
+        }
+
+        init_by_names();
+
+        visited_tokens.resize(SEQLEN);
+
+        hidden_bytes =
+            static_cast<int>(bm_mem_get_device_size(net_blocks_cache[0]->stages[0].output_mems[0]));
+        kv_bytes =
+            static_cast<int>(bm_mem_get_device_size(net_blocks_cache[0]->stages[0].output_mems[1]));
+
+        auto buffer_size = bm_mem_get_device_size(net_embed->stages[0].output_mems[0]);
+        if (bm_malloc_device_byte(bm_handle, &dev_buffer, buffer_size) != BM_SUCCESS) {
+            throw std::runtime_error("[QwenEngine] bm_malloc_device_byte failed");
+        }
+
+        past_key.resize(NUM_LAYERS);
+        past_value.resize(NUM_LAYERS);
+
+        for (int i = 0; i < NUM_LAYERS; i++) {
+            past_key[i]   = net_blocks_cache[i]->stages[0].input_mems[3];
+            past_value[i] = net_blocks_cache[i]->stages[0].input_mems[4];
+            empty_mem(past_key[i]);
+            empty_mem(past_value[i]);
+        }
+    } catch (...) {
+        deinit();  // M2：失败路径清理已分配资源后重抛
+        throw;
     }
-
-    init_by_names();
-
-    visited_tokens.resize(SEQLEN);
-
-    hidden_bytes =
-        static_cast<int>(bm_mem_get_device_size(net_blocks_cache[0]->stages[0].output_mems[0]));
-    kv_bytes =
-        static_cast<int>(bm_mem_get_device_size(net_blocks_cache[0]->stages[0].output_mems[1]));
-
-    auto buffer_size = bm_mem_get_device_size(net_embed->stages[0].output_mems[0]);
-    bm_malloc_device_byte(bm_handle, &dev_buffer, buffer_size);
-
-    past_key.resize(NUM_LAYERS);
-    past_value.resize(NUM_LAYERS);
-    is_dynamic = net_blocks[0]->is_dynamic;
-
-    for (int i = 0; i < NUM_LAYERS; i++) {
-        past_key[i]   = net_blocks_cache[i]->stages[0].input_mems[3];
-        past_value[i] = net_blocks_cache[i]->stages[0].input_mems[4];
-        empty_mem(past_key[i]);
-        empty_mem(past_value[i]);
-    }
-
-    is_same_addr =
-        (net_blocks[0]->stages[0].input_mems[0].u.device.device_addr ==
-         net_blocks[0]->stages[0].output_mems[0].u.device.device_addr);
 }
 
 void QwenEngine::deinit()
 {
-    if (p_bmrt) {
+    // 幂等：init 失败路径也会调用
+    if (dev_buffer.u.device.device_addr && bm_handle) {
         bm_free_device(bm_handle, dev_buffer);
+        dev_buffer.u.device.device_addr = 0;
+    }
+    if (p_bmrt) {
         bmrt_destroy(p_bmrt);
         p_bmrt = nullptr;
     }
@@ -169,6 +191,7 @@ void QwenEngine::deinit()
         bm_dev_free(h);
     }
     handles.clear();
+    bm_handle = nullptr;
 }
 
 // ---- inference helpers ----
@@ -189,31 +212,9 @@ void QwenEngine::net_launch(const bm_net_info_t* net, int stage_idx)
     bool ok =
         bmrt_launch_tensor_ex(p_bmrt, net->name, in_t.data(), net->input_num,
                               out_t.data(), net->output_num, true, false);
-    assert(ok);
-}
-
-void QwenEngine::net_launch_dyn(const bm_net_info_t* net, int real_len, int stage_idx)
-{
-    std::vector<bm_tensor_t> in_t(net->input_num);
-    std::vector<bm_tensor_t> out_t(net->output_num);
-
-    for (int i = 0; i < net->input_num; i++) {
-        bmrt_tensor_with_device(&in_t[i], net->stages[stage_idx].input_mems[i],
-                                net->input_dtypes[i], net->stages[stage_idx].input_shapes[i]);
+    if (!ok) {
+        throw std::runtime_error(std::string("[QwenEngine] launch failed: ") + net->name);
     }
-    for (int i = 0; i < net->output_num; i++) {
-        bmrt_tensor_with_device(&out_t[i], net->stages[stage_idx].output_mems[i],
-                                net->output_dtypes[i], net->stages[stage_idx].output_shapes[i]);
-    }
-    in_t[0].shape.dims[1] = real_len;
-    in_t[1].shape.dims[1] = real_len;
-    in_t[2].shape.dims[2] = real_len;
-    in_t[2].shape.dims[3] = real_len;
-
-    bool ok =
-        bmrt_launch_tensor_ex(p_bmrt, net->name, in_t.data(), net->input_num,
-                              out_t.data(), net->output_num, true, false);
-    assert(ok);
 }
 
 void QwenEngine::net_launch_decode(int idx, int kv_offset, bm_device_mem_t& input_mem,
@@ -240,6 +241,7 @@ void QwenEngine::net_launch_decode(int idx, int kv_offset, bm_device_mem_t& inpu
         bmrt_tensor_with_device(&in_t[2], in2_mem, net->input_dtypes[2],
                                 net->stages[0].input_shapes[2]);
     } else {
+        // 共享缓冲已在 init 校验一致
         bmrt_tensor_with_device(&in_t[1], net_blocks_cache[0]->stages[0].input_mems[1],
                                 net->input_dtypes[1], net->stages[0].input_shapes[1]);
         bmrt_tensor_with_device(&in_t[2], net_blocks_cache[0]->stages[0].input_mems[2],
@@ -264,57 +266,18 @@ void QwenEngine::net_launch_decode(int idx, int kv_offset, bm_device_mem_t& inpu
     bool ok =
         bmrt_launch_tensor_ex(p_bmrt, net->name, in_t.data(), in_t.size(),
                               out_t.data(), out_t.size(), true, false);
-    assert(ok);
-}
-
-int QwenEngine::greedy_search(bm_device_mem_t& logits_mem)
-{
-    auto& in_mem  = net_greedy_head->stages[0].input_mems[0];
-    auto& out_mem = net_greedy_head->stages[0].output_mems[0];
-    d2d(in_mem, logits_mem, 0, static_cast<int>(bm_mem_get_device_size(logits_mem)));
-    net_launch(net_greedy_head);
-    bm_thread_sync(bm_handle);
-    int token = 0;
-    bm_memcpy_d2s(bm_handle, &token, out_mem);
-    return token;
-}
-
-int QwenEngine::penalty_sample(bm_device_mem_t& logits_mem)
-{
-    auto& in0  = net_sample_head->stages[0].input_mems[0];
-    auto& in1  = net_sample_head->stages[0].input_mems[1];
-    auto& in2  = net_sample_head->stages[0].input_mems[2];
-    auto& in3  = net_sample_head->stages[0].input_mems[3];
-    auto& in4  = net_sample_head->stages[0].input_mems[4];
-    auto& in5  = net_sample_head->stages[0].input_mems[5];
-    auto& out0 = net_sample_head->stages[0].output_mems[0];
-    auto& out1 = net_sample_head->stages[0].output_mems[1];
-
-    bm_memcpy_s2d(bm_handle, in1, (void*)visited_tokens.data());
-    bm_memcpy_s2d(bm_handle, in2, (void*)&penalty);
-    bm_memcpy_s2d(bm_handle, in3, (void*)&temperature);
-    bm_memcpy_s2d(bm_handle, in4, (void*)&top_k);
-    bm_memcpy_s2d(bm_handle, in5, (void*)&top_p);
-
-    d2d(in0, logits_mem, 0, static_cast<int>(bm_mem_get_device_size(logits_mem)));
-    net_launch(net_sample_head);
-    bm_thread_sync(bm_handle);
-
-    int                candidate_num = top_k;
-    std::vector<float> probs(candidate_num);
-    std::vector<int>   tokens(candidate_num);
-    bm_memcpy_d2s_partial_offset(bm_handle, probs.data(), out0,
-                                 top_k * sizeof(float), 0);
-    bm_memcpy_d2s_partial_offset(bm_handle, tokens.data(), out1,
-                                 top_k * sizeof(float), 0);
-    std::discrete_distribution<> dist(probs.begin(), probs.end());
-    return tokens[dist(sgen)];
+    if (!ok) {
+        throw std::runtime_error(std::string("[QwenEngine] launch failed: ") + net->name);
+    }
 }
 
 int QwenEngine::forward_first(std::vector<int>& tokens)
 {
-    if (support_prefill_kv) {
-        return forward_first_with_kv(tokens);
+    // H1：固定 shape 缓冲按 SEQLEN 分配，超长输入直接拒绝（Release 下也生效）
+    if (tokens.size() >= (size_t)SEQLEN || tokens.empty()) {
+        throw std::runtime_error("[QwenEngine] invalid input length: " +
+                                 std::to_string(tokens.size()) +
+                                 " (SEQLEN=" + std::to_string(SEQLEN) + ")");
     }
 
     std::vector<int>      position_id(MAX_INPUT_LENGTH, 0);
@@ -327,17 +290,9 @@ int QwenEngine::forward_first(std::vector<int>& tokens)
     for (int i = 0; i < token_length; i++) {
         position_id[i] = i;
     }
-    if (is_dynamic) {
-        for (int i = 0; i < token_length; i++) {
-            for (int j = 0; j <= i; j++) {
-                attention_mask[i * token_length + j] = 0;
-            }
-        }
-    } else {
-        for (int i = 0; i < token_length; i++) {
-            for (int j = 0; j <= i; j++) {
-                attention_mask[i * MAX_INPUT_LENGTH + j] = 0;
-            }
+    for (int i = 0; i < token_length; i++) {
+        for (int j = 0; j <= i; j++) {
+            attention_mask[i * MAX_INPUT_LENGTH + j] = 0;
         }
     }
 
@@ -362,11 +317,7 @@ int QwenEngine::forward_first(std::vector<int>& tokens)
             bm_memcpy_s2d(bm_handle, in1, (void*)position_id.data());
             bm_memcpy_s2d(bm_handle, in2, (void*)attention_mask.data());
         }
-        if (is_dynamic) {
-            net_launch_dyn(net_blocks[idx], token_length);
-        } else {
-            net_launch(net_blocks[idx]);
-        }
+        net_launch(net_blocks[idx]);
         out_mem = net_blocks[idx]->stages[0].output_mems[0];
         d2d(past_key[idx], net_blocks[idx]->stages[0].output_mems[1], 0,
             token_length * kv_bytes);
@@ -380,18 +331,11 @@ int QwenEngine::forward_first(std::vector<int>& tokens)
                        (token_length - 1) * hidden_bytes, hidden_bytes);
     net_launch(net_lm);
 
+    // lm_head 输出 top-k 标量 token_id（lmhead_with_topk）或完整 logits 首元素（读 4 字节），
+    // CPU 读结果前必须 sync
+    bm_thread_sync(bm_handle);
     int token = 0;
-    if (lmhead_with_topk) {
-        bm_thread_sync(bm_handle);
-        bm_memcpy_d2s(bm_handle, &token, lm_out);
-    } else if (!net_greedy_head && !net_sample_head) {
-        bm_thread_sync(bm_handle);
-        bm_memcpy_d2s(bm_handle, &token, lm_out);
-    } else if (generation_mode == "greedy") {
-        token = greedy_search(lm_out);
-    } else {
-        token = penalty_sample(lm_out);
-    }
+    bm_memcpy_d2s(bm_handle, &token, lm_out);
 
     visited_tokens[token_length] = token;
     token_length++;
@@ -399,98 +343,16 @@ int QwenEngine::forward_first(std::vector<int>& tokens)
     return token;
 }
 
-int QwenEngine::forward_first_with_kv(std::vector<int>& inputs)
-{
-    int max_kv_length = MAX_INPUT_LENGTH + PREFILL_KV_LENGTH;
-    std::vector<int>      position_id(MAX_INPUT_LENGTH, 0);
-    std::copy(inputs.begin(), inputs.end(), visited_tokens.data());
-
-    int old_length = history_length;
-    token_length   = static_cast<int>(inputs.size());
-    history_length += token_length;
-
-    std::vector<uint16_t> attention_mask(MAX_INPUT_LENGTH * max_kv_length, mask_value);
-    assert(history_length < SEQLEN);
-    assert(old_length <= PREFILL_KV_LENGTH);
-
-    for (int i = 0; i < token_length; i++) {
-        for (int j = 0; j < old_length; j++) {
-            attention_mask[i * max_kv_length + j] = 0;
-        }
-        for (int j = 0; j <= i; j++) {
-            attention_mask[i * max_kv_length + j + PREFILL_KV_LENGTH] = 0;
-        }
-    }
-    for (int i = 0; i < token_length; i++) {
-        position_id[i] = i + old_length;
-    }
-
-    auto in_mem  = net_embed->stages[0].input_mems[0];
-    auto out_mem = net_embed->stages[0].output_mems[0];
-    empty_mem(in_mem);
-    bm_memcpy_s2d_partial(bm_handle, in_mem, (void*)inputs.data(),
-                          token_length * sizeof(int));
-    net_launch(net_embed);
-    d2d(dev_buffer, out_mem, 0, static_cast<int>(bm_mem_get_device_size(out_mem)));
-    out_mem = dev_buffer;
-
-    empty_net(net_blocks[0]);
-    for (int idx = 0; idx < NUM_LAYERS; idx++) {
-        auto& in0 = net_blocks[idx]->stages[0].input_mems[0];
-        auto& in1 = net_blocks[idx]->stages[0].input_mems[1];
-        auto& in2 = net_blocks[idx]->stages[0].input_mems[2];
-        auto& in3 = net_blocks[idx]->stages[0].input_mems[3];
-        auto& in4 = net_blocks[idx]->stages[0].input_mems[4];
-
-        if (!is_same_addr || idx == 0) {
-            d2d(in0, out_mem);
-        }
-        if (old_length > 0) {
-            bm_memcpy_d2d_byte(bm_handle, in3, 0, past_key[idx], 0,
-                               kv_bytes * old_length);
-            bm_memcpy_d2d_byte(bm_handle, in4, 0, past_value[idx], 0,
-                               kv_bytes * old_length);
-        } else if (idx == 0) {
-            empty_mem(in3);
-            empty_mem(in4);
-        }
-        bm_memcpy_s2d(bm_handle, in1, (void*)position_id.data());
-        bm_memcpy_s2d(bm_handle, in2, (void*)attention_mask.data());
-        net_launch(net_blocks[idx]);
-        out_mem = net_blocks[idx]->stages[0].output_mems[0];
-
-        auto& out1 = net_blocks[idx]->stages[0].output_mems[1];
-        auto& out2 = net_blocks[idx]->stages[0].output_mems[2];
-        bm_memcpy_d2d_byte(bm_handle, past_key[idx], old_length * kv_bytes,
-                           out1, 0, kv_bytes * token_length);
-        bm_memcpy_d2d_byte(bm_handle, past_value[idx], old_length * kv_bytes,
-                           out2, 0, kv_bytes * token_length);
-    }
-
-    auto& lm_in  = net_lm->stages[0].input_mems[0];
-    auto& lm_out = net_lm->stages[0].output_mems[0];
-    bm_memcpy_d2d_byte(bm_handle, lm_in, 0, out_mem,
-                       (token_length - 1) * hidden_bytes, hidden_bytes);
-    net_launch(net_lm);
-
-    int token = 0;
-    if (!net_greedy_head && !net_sample_head) {
-        bm_thread_sync(bm_handle);
-        bm_memcpy_d2s(bm_handle, &token, lm_out);
-    } else if (generation_mode == "greedy") {
-        token = greedy_search(lm_out);
-    } else {
-        token = penalty_sample(lm_out);
-    }
-
-    visited_tokens[token_length] = token;
-    token_length++;
-    history_length++;
-    return token;
-}
-
 int QwenEngine::forward_next()
 {
+    // L4：forward_next 在 forward_first 之前调用会读到 -1 下标
+    if (token_length == 0) {
+        throw std::runtime_error("[QwenEngine] forward_next called before forward_first");
+    }
+    if (token_length >= SEQLEN) {
+        throw std::runtime_error("[QwenEngine] sequence length exhausted: " +
+                                 std::to_string(SEQLEN));
+    }
     int cur_token = visited_tokens[token_length - 1];
 
     std::vector<uint16_t> attention_mask(SEQLEN + 1, 0);
@@ -515,32 +377,12 @@ int QwenEngine::forward_next()
     d2d(lm_in, out_mem);
     net_launch(net_lm);
 
+    bm_thread_sync(bm_handle);
     int token = 0;
-    if (lmhead_with_topk) {
-        bm_thread_sync(bm_handle);
-        bm_memcpy_d2s(bm_handle, &token, lm_out);
-    } else if (!net_greedy_head && !net_sample_head) {
-        bm_thread_sync(bm_handle);
-        bm_memcpy_d2s(bm_handle, &token, lm_out);
-    } else if (generation_mode == "greedy") {
-        token = greedy_search(lm_out);
-    } else {
-        token = penalty_sample(lm_out);
-    }
+    bm_memcpy_d2s(bm_handle, &token, lm_out);
 
     visited_tokens[token_length] = token;
     token_length++;
     history_length++;
     return token;
-}
-
-void QwenEngine::clear_kv()
-{
-    if (!support_prefill_kv)
-        return;
-    for (int i = 0; i < NUM_LAYERS; i++) {
-        empty_mem(past_key[i]);
-        empty_mem(past_value[i]);
-    }
-    history_length = 0;
 }

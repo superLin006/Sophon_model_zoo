@@ -1,7 +1,9 @@
 #!/bin/bash
-# HY-MT W4BF16 扩展回归（46 用例：16 原有 + 30 新增，覆盖多语言对/术语/格式/数字/科技/金融/长文）
-# 用法: MODEL_DIR=${1:-/data/hymt_w4g64} REPEATS=${REPEATS:-1} bash board_regression_w4_extended.sh
-set -euo pipefail
+# HY-MT 扩展回归（61 用例：16 原有 + 45 新增，覆盖多语言对/术语/格式/数字/科技/金融/长文）
+# 用法: MODEL_DIR=${1:-/data/hymt_w4g64} BIN=${BIN:-$MODEL_DIR/hymt_demo} \
+#       REPEATS=${REPEATS:-1} bash board_regression_full.sh
+# 注：单用例失败不中断整套（记录 FAIL 继续），用于 W8/W4 任意版本
+set -uo pipefail
 
 MODEL_DIR="${1:-/data/hymt_w4g64}"
 BIN="${BIN:-${MODEL_DIR}/hymt_demo}"
@@ -14,7 +16,9 @@ run_case() {
     local repeat
     for ((repeat = 1; repeat <= REPEATS; repeat++)); do
         echo "===== ${name} repeat=${repeat}/${REPEATS} ====="
-        "${BIN}" "${MODEL_DIR}" "${prompt}" "${max_new_tokens}"
+        if ! "${BIN}" "${MODEL_DIR}" "${prompt}" "${max_new_tokens}"; then
+            echo "[FAIL] ${name} repeat=${repeat}"
+        fi
     done
 }
 

@@ -1,5 +1,6 @@
 models/
 compile/tmp/
+compile/__pycache__/
 cpp/build*/
 *.bmodel
 *.mlir
