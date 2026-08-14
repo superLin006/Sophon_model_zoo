@@ -1,0 +1,11 @@
+models/
+compile/tmp/
+cpp/build*/
+*.bmodel
+*.mlir
+*.npz
+
+# 测试生成物：日志/音频不入库，分析 md 与脚本入库
+outputs/**/*.log
+outputs/**/*.wav
+outputs/baseline/

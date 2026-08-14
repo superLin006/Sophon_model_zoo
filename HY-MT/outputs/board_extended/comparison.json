@@ -1,0 +1,275 @@
+{
+  "variants": {
+    "w8bf16": {
+      "exact_matches": 9,
+      "case_count": 16,
+      "mean_character_similarity": 0.9638693817693824,
+      "prefill_ms": {
+        "count": 16,
+        "mean": 205.8326875,
+        "median": 205.472,
+        "min": 204.831,
+        "max": 208.243,
+        "stdev": 1.0558284405306253
+      },
+      "decode_tokens_per_second": {
+        "count": 16,
+        "mean": 23.0572625,
+        "median": 22.99355,
+        "min": 22.8452,
+        "max": 23.475,
+        "stdev": 0.201939815704251
+      },
+      "cases": [
+        {
+          "id": "en_zh_short",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "这是免费的。",
+          "output": "这是免费的。"
+        },
+        {
+          "id": "zh_en_short",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "This plan needs to be completed by Friday.",
+          "output": "This plan needs to be completed by Friday."
+        },
+        {
+          "id": "ja_zh_short",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "这列火车会在东京站停靠吗？",
+          "output": "这列火车会在东京站停靠吗？"
+        },
+        {
+          "id": "terminology",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "Sophon-based processors are suitable for edge computing.",
+          "output": "Sophon-based processors are suitable for edge computing."
+        },
+        {
+          "id": "formatting",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "<target><sn>在运行模型之前，请先安装<sn>transformers==4.56.1</sn>。</sn></target>",
+          "output": "<target><sn>在运行模型之前，请先安装<sn>transformers==4.56.1</sn>。</sn></target>"
+        },
+        {
+          "id": "en_zh_medium_news",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "该地区铁路运营商在周二宣布，周末期间，列车的运行频率将调整为每十五分钟一班。同时，市区内的几座车站也会提前关闭，以便进行维护工作。乘客们被建议在出发前查看最新的时刻表。",
+          "output": "该地区铁路运营商在周二宣布，周末期间，列车的运行频率将调整为每十五分钟一班。同时，市区内的几座车站也会提前关闭，以便进行维护工作。乘客们被建议在出发前查看最新的时刻表。"
+        },
+        {
+          "id": "zh_en_medium_business",
+          "exact_match": false,
+          "character_similarity": 0.9902597402597403,
+          "reference": "Due to the decline in raw material prices and the gradual recovery of overseas orders, the company’s gross profit margin improved in the second quarter. However, the management still believes that exchange rate fluctuations and logistics costs remain the main uncertainties in the second half of the year.",
+          "output": "Due to the decline in raw material prices and the gradual recovery of overseas orders, the company’s gross profit margin improved in the second quarter. However, the management still believes that exchange rate fluctuations and logistics costs remain to be the main uncertainties in the second half of the year."
+        },
+        {
+          "id": "ja_zh_medium_notice",
+          "exact_match": false,
+          "character_similarity": 0.9078947368421053,
+          "reference": "为了进行系统更新，我们将在8月15日凌晨1点至4点期间暂停在线服务。具体结束时间可能会根据工作的进展而有所调整。请予以谅解，给我们一些时间来完成这项工作。",
+          "output": "为了进行系统更新，我们将在8月15日凌晨1点至4点期间暂停在线服务。具体结束时间可能会因工作进度而有所调整。请予以理解，给我们一些时间来处理这些工作。"
+        },
+        {
+          "id": "en_zh_technical",
+          "exact_match": false,
+          "character_similarity": 0.95,
+          "reference": "在自回归解码过程中，模型会重新使用之前生成的键值缓存。这样就能避免重新计算整个注意力历史信息。不过，当上下文信息变得非常庞大时，内存带宽仍然可能成为瓶颈问题。",
+          "output": "在自回归解码过程中，模型会重新使用之前生成的键值缓存数据。这样就能避免重新计算整个注意力历史记录，不过，当上下文信息变得非常庞大时，内存带宽仍然可能成为瓶颈问题。"
+        },
+        {
+          "id": "zh_en_technical",
+          "exact_match": false,
+          "character_similarity": 0.6838235294117647,
+          "reference": "Quantization doesn’t necessarily lead to a corresponding improvement in overall performance. It’s only when weight retrieval becomes a major bottleneck, and the cost of dequantization is sufficiently low, that a smaller weight format can actually bring significant benefits.",
+          "output": "Quantization doesn’t necessarily lead to a corresponding improvement in overall performance. It’s only when weight retrieval becomes a major bottleneck, and the overhead associated with dequantization is minimal, that a smaller weight format can actually bring benefits."
+        },
+        {
+          "id": "en_zh_numbers_units",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "该设备在 37.5 秒内处理了 12,480 个请求，平均功耗为 42 瓦特。在整个测试过程中，设备的温度始终保持在 68°C 以下。",
+          "output": "该设备在 37.5 秒内处理了 12,480 个请求，平均功耗为 42 瓦特。在整个测试过程中，设备的温度始终保持在 68°C 以下。"
+        },
+        {
+          "id": "zh_en_names_dates",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "Li Ming will attend the Edge AI Summit in Shenzhen on September 3, 2026. At 2:30 pm, he will introduce the new generation of inference platforms.",
+          "output": "Li Ming will attend the Edge AI Summit in Shenzhen on September 3, 2026. At 2:30 pm, he will introduce the new generation of inference platforms."
+        },
+        {
+          "id": "en_zh_long_policy",
+          "exact_match": false,
+          "character_similarity": 0.9340659340659341,
+          "reference": "在部署该服务之前，工程团队必须完成三项检查。首先，需要将转换后的模型与基于确定性参考模型的输出结果进行比较，以评估其在不同输入条件下的性能。其次，应该记录模型在预热阶段后的延迟时间，而不是仅依赖一次冷启动时的测量结果。最后，应保留之前的模型版本，以便在精度或稳定性下降时，能够快速回退到之前的模型状态。只有当所有检查都通过且结果被记录下来后，才能正式发布该服务。",
+          "output": "在部署该服务之前，工程团队必须完成三项检查。首先，需要将转换后的模型与基于确定性参考模型的模型进行对比，以评估其在短、中、长输入条件下的性能。其次，应该记录模型在预热阶段后的延迟时间，而不是仅依赖一次冷启动时的测量结果。最后，应该保留之前的模型版本，以便在模型精度或稳定性下降时，能够快速回退到之前的版本。只有当所有检查都通过且结果被记录下来后，才能正式发布该服务。"
+        },
+        {
+          "id": "zh_en_long_report",
+          "exact_match": false,
+          "character_similarity": 0.975346687211094,
+          "reference": "This testing process utilizes a fixed random seed and greedy decoding methods, afin of comparing the outputs of different quantization levels. The test set includes various types of text: short sentences, technical paragraphs, numerical units, specialized terms, and labeled texts. Each performance scenario is run multiple times after warming up, and the first word delay as well as subsequent decoding speeds are recorded for each scenario. If a low-bitmodel provides faster results, but still encounters errors such as omissions, repetitions, or terminology mistakes in long texts, then it cannot be directly replaced by the higher-precision model.",
+          "output": "This testing process utilizes a fixed random seed and greedy decoding methods, afinage to compare the outputs of different quantization levels. The test set includes various types of text: short sentences, technical paragraphs, numerical units, specialized terms, and labeled texts. Each performance scenario is run multiple times after warming up, and the first word delay as well as subsequent decoding speeds are recorded for each scenario. If a low-bitmodel provides faster results, but still encounters errors such as omissions, repetitions, or terminology mistakes in long texts, it cannot be directly replaced by the higher-precision model."
+        },
+        {
+          "id": "formatting_medium",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "<target><code>MAX_LENGTH=512</code>，重新启动<product>Sophon Service</product>，并确认状态为<b>健康</b>。</target>",
+          "output": "<target><code>MAX_LENGTH=512</code>，重新启动<product>Sophon Service</product>，并确认状态为<b>健康</b>。</target>"
+        },
+        {
+          "id": "terminology_medium",
+          "exact_match": false,
+          "character_similarity": 0.9805194805194806,
+          "reference": "The Sophon team has optimized the edge inference service using the tensor processor, while still maintaining a highly accurate model that can be rolled back.",
+          "output": "The Sophon team has optimized the edge inference service using the tensor processor, while maintaining a highly accurate model that can be rolled back."
+        }
+      ]
+    },
+    "w4bf16_g64": {
+      "exact_matches": 3,
+      "case_count": 16,
+      "mean_character_similarity": 0.8154966432038108,
+      "prefill_ms": {
+        "count": 16,
+        "mean": 203.4485,
+        "median": 202.84199999999998,
+        "min": 202.47,
+        "max": 205.775,
+        "stdev": 1.084384003324776
+      },
+      "decode_tokens_per_second": {
+        "count": 16,
+        "mean": 34.4113,
+        "median": 34.37845,
+        "min": 34.0567,
+        "max": 34.8911,
+        "stdev": 0.2416362362450365
+      },
+      "cases": [
+        {
+          "id": "en_zh_short",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "这是免费的。",
+          "output": "这是免费的。"
+        },
+        {
+          "id": "zh_en_short",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "This plan needs to be completed by Friday.",
+          "output": "This plan needs to be completed by Friday."
+        },
+        {
+          "id": "ja_zh_short",
+          "exact_match": true,
+          "character_similarity": 1.0,
+          "reference": "这列火车会在东京站停靠吗？",
+          "output": "这列火车会在东京站停靠吗？"
+        },
+        {
+          "id": "terminology",
+          "exact_match": false,
+          "character_similarity": 0.9433962264150944,
+          "reference": "Sophon-based processors are suitable for edge computing.",
+          "output": "Sophon processors are suitable for edge computing."
+        },
+        {
+          "id": "formatting",
+          "exact_match": false,
+          "character_similarity": 0.9629629629629629,
+          "reference": "<target><sn>在运行模型之前，请先安装<sn>transformers==4.56.1</sn>。</sn></target>",
+          "output": "<target><sn>请在运行模型之前安装 <sn>transformers==4.56.1</sn>。</sn></target>"
+        },
+        {
+          "id": "en_zh_medium_news",
+          "exact_match": false,
+          "character_similarity": 0.8395061728395061,
+          "reference": "该地区铁路运营商在周二宣布，周末期间，列车的运行频率将调整为每十五分钟一班。同时，市区内的几座车站也会提前关闭，以便进行维护工作。乘客们被建议在出发前查看最新的时刻表。",
+          "output": "该地区铁路运营商在周二宣布，周末的列车运行频率将改为每十五分钟一班。同时，市区内的几个车站也会因为维护工作而提前关闭。乘客们被建议在出发前查看最新的时刻表。"
+        },
+        {
+          "id": "zh_en_medium_business",
+          "exact_match": false,
+          "character_similarity": 0.9278688524590164,
+          "reference": "Due to the decline in raw material prices and the gradual recovery of overseas orders, the company’s gross profit margin improved in the second quarter. However, the management still believes that exchange rate fluctuations and logistics costs remain the main uncertainties in the second half of the year.",
+          "output": "Due to the decline in raw material prices and the gradual recovery of overseas orders, the company’s gross profit margin in the second quarter improved. However, the management still believes that exchange rate fluctuations and logistics costs remain the main uncertainties in the second half of the year."
+        },
+        {
+          "id": "ja_zh_medium_notice",
+          "exact_match": false,
+          "character_similarity": 0.6928104575163399,
+          "reference": "为了进行系统更新，我们将在8月15日凌晨1点至4点期间暂停在线服务。具体结束时间可能会根据工作的进展而有所调整。请予以谅解，给我们一些时间来完成这项工作。",
+          "output": "为了进行系统更新，从8月15日凌晨1点至凌晨4点，在线服务将暂停。由于工作进度不同，实际结束时间可能会有所调整。请予以理解，给我们一些时间来处理这件事。"
+        },
+        {
+          "id": "en_zh_technical",
+          "exact_match": false,
+          "character_similarity": 0.8481012658227848,
+          "reference": "在自回归解码过程中，模型会重新使用之前生成的键值缓存。这样就能避免重新计算整个注意力历史信息。不过，当上下文信息变得非常庞大时，内存带宽仍然可能成为瓶颈问题。",
+          "output": "在自回归解码过程中，模型会重复使用由之前的数据点生成的键值缓存。这样就能避免重新计算整个注意力历史记录，不过当上下文规模较大时，内存带宽仍然可能成为瓶颈问题。"
+        },
+        {
+          "id": "zh_en_technical",
+          "exact_match": false,
+          "character_similarity": 0.1303538175046555,
+          "reference": "Quantization doesn’t necessarily lead to a corresponding improvement in overall performance. It’s only when weight retrieval becomes a major bottleneck, and the cost of dequantization is sufficiently low, that a smaller weight format can actually bring significant benefits.",
+          "output": "Quantization doesn’t necessarily result in a proportional increase in overall performance. It’s only when weight retrieval is the main bottleneck and the overhead of dequantization is sufficiently low that a smaller weight format can provide significant benefits."
+        },
+        {
+          "id": "en_zh_numbers_units",
+          "exact_match": false,
+          "character_similarity": 0.9777777777777777,
+          "reference": "该设备在 37.5 秒内处理了 12,480 个请求，平均功耗为 42 瓦特。在整个测试过程中，设备的温度始终保持在 68°C 以下。",
+          "output": "该设备在 37.5 秒内处理了 12,480 个请求，平均功耗为 42 瓦特，且在整个测试过程中，设备的温度始终保持在 68°C 以下。"
+        },
+        {
+          "id": "zh_en_names_dates",
+          "exact_match": false,
+          "character_similarity": 0.9134948096885813,
+          "reference": "Li Ming will attend the Edge AI Summit in Shenzhen on September 3, 2026. At 2:30 pm, he will introduce the new generation of inference platforms.",
+          "output": "Li Ming will attend the Edge AI Summit in Shenzhen on September 3, 2026. He will introduce the new generation of inference platforms at 2:30 pm."
+        },
+        {
+          "id": "en_zh_long_policy",
+          "exact_match": false,
+          "character_similarity": 0.8870056497175142,
+          "reference": "在部署该服务之前，工程团队必须完成三项检查。首先，需要将转换后的模型与基于确定性参考模型的输出结果进行比较，以评估其在不同输入条件下的性能。其次，应该记录模型在预热阶段后的延迟时间，而不是仅依赖一次冷启动时的测量结果。最后，应保留之前的模型版本，以便在精度或稳定性下降时，能够快速回退到之前的模型状态。只有当所有检查都通过且结果被记录下来后，才能正式发布该服务。",
+          "output": "在部署该服务之前，工程团队必须完成三项检查。首先，需要将转换后的模型与确定性参考模型进行比对，以验证其在短、中、长输入条件下的性能。其次，应记录启动后的延迟时间，而不是仅依赖一次冷启动时的测量结果。最后，应保留之前的模型版本，以便在精度或稳定性出现下降时，能够快速回退到之前的模型版本。只有当所有检查都通过且结果被记录下来后，才能继续发布该服务。"
+        },
+        {
+          "id": "zh_en_long_report",
+          "exact_match": false,
+          "character_similarity": 0.13096200485044462,
+          "reference": "This testing process utilizes a fixed random seed and greedy decoding methods, afin of comparing the outputs of different quantization levels. The test set includes various types of text: short sentences, technical paragraphs, numerical units, specialized terms, and labeled texts. Each performance scenario is run multiple times after warming up, and the first word delay as well as subsequent decoding speeds are recorded for each scenario. If a low-bitmodel provides faster results, but still encounters errors such as omissions, repetitions, or terminology mistakes in long texts, then it cannot be directly replaced by the higher-precision model.",
+          "output": "This test uses a fixed random seed and greedy decoding methods, in order to compare the outputs of different quantization levels. The test set includes short sentences, technical paragraphs, numerical units, technical terms, and labeled text. Each performance case is run multiple times after warming up, and the first word element delay and subsequent decoding speed are recorded for each case. If a low-bit model is faster, it cannot be directly replaced by the current high-precision version, especially if there are omissions, repetitions, or errors in terms within the longer text."
+        },
+        {
+          "id": "formatting_medium",
+          "exact_match": false,
+          "character_similarity": 0.9090909090909091,
+          "reference": "<target><code>MAX_LENGTH=512</code>，重新启动<product>Sophon Service</product>，并确认状态为<b>健康</b>。</target>",
+          "output": "<target><code>MAX_LENGTH=512</code>，重新启动<product>Sophon Service>，并确认状态为<b>健康</b>。</code>"
+        },
+        {
+          "id": "terminology_medium",
+          "exact_match": false,
+          "character_similarity": 0.8846153846153846,
+          "reference": "The Sophon team has optimized the edge inference service using the tensor processor, while still maintaining a highly accurate model that can be rolled back.",
+          "output": "The Sophon team has optimized the edge inference service using the tensor processor, while still maintaining the high-precision models that can be retried."
+        }
+      ]
+    }
+  },
+  "w4_decode_speedup_percent": 49.242781965118354
+}
