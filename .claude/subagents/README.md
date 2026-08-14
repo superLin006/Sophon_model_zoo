@@ -4,158 +4,59 @@
 
 | Subagent | 版本 | 职责 | 输出文件 |
 |---------|------|------|---------|
-| **project-initializer** | v1.0 | 项目初始化、环境配置、PyTorch baseline 测试 | `{model}/.context/baseline.md` |
-| **operator-analyst** | v1.0 | ONNX 算子兼容性分析、具体修改方案 | `{model}/.context/operator_analysis.md` |
-| **python-converter** | v1.0 | ONNX 导出、bmodel 转换（F32+F16）、精度验证 | `{model}/.context/bmodel_info.md` |
-| **cpp-implementer** | v1.0 | C++ 推理实现、交叉编译、板卡部署、RTF 测试 | 最终可执行程序 + 测试结果 |
+| **project-initializer** | v1.2 | 项目初始化、环境配置、PyTorch baseline 测试 | `{model}/.context/baseline.md` |
+| **operator-analyst** | v1.2 | ONNX 算子兼容性分析、修改方案（参考官方源码改造） | `{model}/.context/operator_analysis.md` |
+| **python-converter** | v1.2 | ONNX 导出、bmodel 转换、**板卡 sail Python 推理验证** | `{model}/.context/bmodel_info.md` |
+| **cpp-implementer** | v1.2 | C++ 推理实现（复用第三方库）、交叉编译、板卡部署、RTF 测试 | 可执行程序 + 测试结果 |
+| **performance-optimizer** | v1.1 | 分模块计时定位瓶颈、KV/批处理/编译参数优化、量化实验 | `{model}/.context/perf_log.md` |
 
 ## 设计原则
 
-1. **每个 subagent 自闭环**：做完自己的事 → 自己验证 → 有问题自己修 → 确认无误后返回
-2. **做一步验一步**：每个 Step 都有明确的验证标准和失败修复策略
-3. **算子分析独立**：operator-analyst 独立存在，避免转换失败时回溯代价过大
-4. **Context 传递**：通过 `.context/` 目录的 md 文件在 subagent 间传递信息
-5. **精简文档**：每个 subagent 只生成必要的 context 文件，不产生冗余文档
+1. **每个 subagent 自闭环**：做完 → 验证 → 有问题自修 → 确认后返回
+2. **做一步验一步**：每个 Step 有明确验证标准和失败修复策略
+3. **Python 验证先行**：bmodel 先过板卡 sail 端到端验证，才进 C++——C++ 出错时可排除 bmodel 嫌疑
+4. **复用不造轮子**：C++ 优先复用 `1_third_party/`；Python 导出参考官方源码仓库改造
+5. **精度优先于性能**：性能优化每步复验精度，退化回退
+6. **精简文档**：每个 subagent 只生成必要的 context 文件
 
 ## 标准流程
 
 ```
-1. project-initializer
-   输入: 模型路径、Conda 环境
-   输出: .context/baseline.md（PyTorch 基线结果 + 输入输出 shape）
-
-2. operator-analyst
-   输入: baseline.md、ONNX 模型
-   输出: .context/operator_analysis.md（兼容性报告 + 修改方案）
-
-3. python-converter
-   输入: operator_analysis.md、SDK 路径、目标精度
-   输出: bmodel（F32+F16）、.context/bmodel_info.md
-
-4. cpp-implementer
-   输入: bmodel_info.md、Python debug 输出、板卡信息
-   输出: 可执行程序 + 板卡测试结果（含 RTF）
+1. project-initializer   → baseline.md
+2. operator-analyst      → operator_analysis.md
+3. python-converter      → bmodel + 板卡 sail 验证通过 + bmodel_info.md
+4. cpp-implementer       → 可执行程序 + 板卡测试（含 RTF）
+5. performance-optimizer → perf_log.md（优化 + 精度复验）
 ```
 
 每步完成后主 Agent 向用户报告结果，用户确认后再进行下一步。
 
-## 信息注入机制
+## 主 Agent 注入方式
 
-### 用户提示词中通常包含的信息
+启动 subagent 时注入：项目信息（模型路径/目标精度/官方源码仓库）、**前序 `.context/*.md` 内容**、板卡信息（IP/用户/密码）、用户要求。公共资源路径见下方"配套资源"。
 
-| 信息类型 | 示例 | 接收的 subagent |
-|---------|------|---------------|
-| 模型路径 | `whisper/` | 全部 |
-| 模型信息 | "Whisper base，带 KV cache" | 全部 |
-| Conda 环境 | `sophon-export` | project-initializer, python-converter |
-| 目标精度 | `F32 + F16` | python-converter, cpp-implementer |
-| 板卡信息 | IP / 用户名 / 密码 | cpp-implementer |
-| 参考项目 | `Sophon_model_zoo/whisper/` | operator-analyst, cpp-implementer |
-| 特殊要求 | "固定输入 shape"、"KV cache 分步导出" | operator-analyst, python-converter |
+## Context 传递
 
-### 主 Agent 注入方式
+`{model}/.context/`：`baseline.md → operator_analysis.md → bmodel_info.md → perf_log.md`，主 Agent 逐级读取传递。
 
-```
-启动 {subagent_name}，注入以下信息：
-
-## 项目信息
-- 模型: <模型名>（<简要描述>）
-- 仓库路径: /home/xh/itc_project/Sophon_model_zoo/<model>/
-- 目标精度: F32 + F16
-
-## 环境
-- Conda 环境: sophon-export
-- TPU-MLIR Docker: sophgo/tpuc_dev:latest
-- 交叉编译 Docker: sophon-cross-build
-
-## 资源路径
-- SOC SDK: Sophon_model_zoo/0_Toolkits/soc-sdk-sp4/
-- tpu_mlir whl: Sophon_model_zoo/0_Toolkits/tpu_mlir*.whl
-- 第三方库: Sophon_model_zoo/1_third_party/
-- 参考项目: Sophon_model_zoo/whisper/ 或 sensevoice/
-
-## 板卡信息（cpp-implementer 用）
-- IP: <ip>  用户: <user>  密码: <pwd>
-- 部署路径: /home/<user>/<model>/
-
-## 前序 Context
-{读取 .context/*.md 文件内容}
-
-## 你的任务
-{从 subagent 模板中复制任务描述}
-```
-
-## Context 传递机制
-
-### 目录结构
-```
-{model}/.context/
-├── baseline.md           # project-initializer 生成
-├── operator_analysis.md  # operator-analyst 生成
-└── bmodel_info.md        # python-converter 生成
-```
-
-### 传递流程
-```
-用户上下文 → 主 Agent 注入 → subagent 执行 → 生成 .context/md → 主 Agent 读取并传递给下个 subagent
-```
-
-## 用户提示词模板
-
-```
-<模型名> 移植到 Sophon BM1684X 推理测试
-
-查看 Sophon_model_zoo/.claude/subagents/README.md 根据 README.md 完成任务
-
-1. 上下文
-
-目标：将 <模型名> 移植到 BM1684X，通过 scp 部署到板卡完成测试
-
-历史与计划：分三个大步骤
-- 第一步（Python 端）：PyTorch → ONNX → bmodel（F32+F16）
-  转换脚本：export_onnx.py、gen_bmodel.sh
-  测试脚本：test_pytorch.py（baseline）、test_onnx.py
-- 第二步（C++ 端）：实现 BMRuntime 推理程序
-  参考：Sophon_model_zoo/whisper/cpp/ 或 sensevoice/cpp/
-- 第三步（部署）：sophon-cross-build 交叉编译 → scp → 板卡测试 RTF
-
-2. 当前意图
-先完成 Python 端工作，有问题分析解决
-Python 端完成后逐一检查输出，没有问题后再给出下一步任务
-
-3. 资源
+## 配套资源（公共，各 subagent 直接使用）
 
 | 资源 | 路径 |
 |------|------|
-| SOC SDK | Sophon_model_zoo/0_Toolkits/soc-sdk-sp4/ |
-| tpu_mlir whl | Sophon_model_zoo/0_Toolkits/tpu_mlir*.whl |
-| 第三方库 | Sophon_model_zoo/1_third_party/ |
-| 知识库 | Sophon_model_zoo/.claude/doc/sophon_bm1684_knowledge_base.md |
-| 算子列表 | Sophon_model_zoo/.claude/doc/sophon_tpumlir_operators.md |
-| 参考项目（Whisper） | Sophon_model_zoo/whisper/ |
-| 参考项目（SenseVoice） | Sophon_model_zoo/sensevoice/ |
-
-板卡信息：IP: <ip>  用户: <user>  密码: <pwd>
-模型路径: <path>
-
-4. 注意事项
-- ONNX 导出：dummy tensor 必须用列表推导式创建（KV cache 场景）
-- 算子不支持时：先确认算子列表，再考虑用等价算子替换，保持语义不变
-- bmodel 转换：复杂图（多输入输出）加 --disable_layer_group
-- RTF 统计：只计特征提取 + TPU 推理，不含模型加载
-
-先让我看看你的计划
-```
-
-## 配套资源
-
-- 算子列表: `Sophon_model_zoo/.claude/doc/sophon_tpumlir_operators.md`
-- 知识库: `Sophon_model_zoo/.claude/doc/sophon_bm1684_knowledge_base.md`
-- 输出规范: `Sophon_model_zoo/.claude/standards/bmodel_output_management.md`
-- 部署规范: `Sophon_model_zoo/.claude/standards/board_deploy_workflow.md`
-- 参考项目（Whisper）: `Sophon_model_zoo/whisper/`
-- 参考项目（SenseVoice）: `Sophon_model_zoo/sensevoice/`
+| 知识库 | `.claude/doc/sophon_bm1684_knowledge_base.md` |
+| 算子列表 | `.claude/doc/sophon_tpumlir_operators.md` |
+| 输出规范 | `.claude/standards/bmodel_output_management.md` |
+| 部署规范 | `.claude/standards/board_deploy_workflow.md` |
+| SOC SDK | `0_Toolkits/soc-sdk-sp4/` |
+| 第三方库（tokenizers-cpp 等） | `1_third_party/` |
+| TPU-MLIR Docker | `sophon/tpuc_dev:v3.4-tpumlir-1.28.1`（`3_docker/run_docker.sh`） |
+| 交叉编译 Docker | `sophon-cross-build` |
+| 参考项目 ASR | `whisper/`、`sensevoice/` |
+| sail 上板参考 | `chatTTS/python/ChatTTS/npuengine.py` |
+| 性能优化实战 | `Qwen3-TTS/.context/cp_debug_log.md` |
 
 ## 版本历史
 
-- v1.0 (2026-05-12): 初始版本，基于 MTK subagent 系统改造，适配 Sophon BM1684X 工具链
+- v1.2 (2026-08-14): 全系统瘦身——删除代码模板（改为指向参考文件）、公共资源统一到 README、context 模板压缩为字段清单；内容聚焦"判断标准 + 踩坑经验"
+- v1.1 (2026-08-14): 新增 performance-optimizer；python-converter 增加板卡 sail 验证步骤；cpp-implementer 强调复用第三方库；工具链更新；网络改造参考官方源码
+- v1.0 (2026-05-12): 初始版本，面向 Sophon BM1684X 工具链设计

@@ -145,23 +145,6 @@
 
 ---
 
-## 🆚 与 MTK MDLA 5.3 关键差异对比
-
-| 算子 | MTK MDLA 5.3 | Sophon TPU-MLIR | 影响场景 |
-|------|:-----------:|:---------------:|---------|
-| **Gather** | ❌ | ✅ | Embedding 层可在 NPU 跑 |
-| **Equal / Greater / Less** | ❌ | ✅ | Attention mask 动态计算 |
-| **Where** | ❌ | ✅ | masked_fill 直接支持 |
-| **TopK** | ❌ | ✅ | Beam Search 在 NPU 跑 |
-| **Log / Ceil / Floor / Round** | ❌ | ✅ | 数学函数完整支持 |
-| **LogSoftmax** | ❌ | ✅ | 直接使用无需拆分 |
-| **LeakyRelu** | ❌ | ✅ | 检测模型常用 |
-| **Trilu** | ❌ | ✅ | causal mask 直接支持 |
-| **NonZero** | ❌ | ✅ | 动态索引 |
-| **If / Loop** | ❌ | ⚠️ 有限支持 | 控制流部分回退 CPU |
-
----
-
 ## ⚠️ 需要注意的情况
 
 ### 1. 动态 Shape

@@ -1,8 +1,7 @@
-# sherpa-onnx × Sophon BM1684X 交付规范 v1.0
+# sherpa-onnx × Sophon BM1684X 交付规范 v1.1
 
 > 用于把基于 sherpa-onnx 框架、跑在 BM1684X TPU 上的模型（如 SenseVoice ASR、
-> ChatTTS TTS）打包成开发/测试人员可直接使用的交付物。
-> 参考 MTK 的 `android_deliver_workflow.md`，但适配 Sophon（Ubuntu aarch64 板卡 + ssh）。
+> ChatTTS TTS）打包成开发/测试人员可直接使用的交付物（Ubuntu aarch64 板卡 + ssh）。
 
 ---
 
@@ -12,8 +11,8 @@
 确认编译产物 → 整理 deliver/ → 板卡本地验证 → 打包交付
 ```
 
-与 MTK 版的关键差异：
-- 板卡是 **Ubuntu aarch64 + ssh/scp**（不是 Android/adb）
+关键特点：
+- 板卡是 **Ubuntu aarch64 + ssh/scp**
 - 必须 **glibc 版本匹配**（见下，最易踩的坑）
 - 交付物是 **sherpa-onnx SDK**（头文件 + 两个 .so + 模型），不是单可执行文件
 
