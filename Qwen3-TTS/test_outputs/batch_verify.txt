@@ -1,0 +1,14 @@
+zh_short|all_zh|zh|你好。
+new_english|Ryan|en|The quick brown fox jumps over the lazy dog while the sun sets behind the mountains.
+baseline_zh|all_zh|zh|今天天气不错，我们一起去公园散步吧，顺便买杯咖啡。
+spk_vivian|Vivian|zh|我们公司在深圳和上海都设有研发中心，员工超过两千人。
+spk_serena|Serena|zh|这款芯片支持八位整数量化，功耗只有十二瓦。
+spk_unclefu|Uncle_Fu|zh|请把这份合同仔细看一遍，重点确认交付时间和付款方式。
+spk_aiden|Aiden|zh|明天下午三点开会，请大家提前准备好材料。
+spk_ryan_zh|Ryan|zh|人工智能正在改变各行各业，从医疗到教育都有广泛应用。
+type_mixed|all_zh|zh|今天读了 Qwen3-TTS 的文档，发现 SEQLEN 参数影响性能，128 帧可以合成 10 秒音频。
+type_number|all_zh|zh|数据统计显示，12345 个样本中，87.6% 的准确率，误差小于 0.5%。
+type_punct|all_zh|zh|注意：请勿在维护期间重启节点；否则可能丢失缓存（见第 3 节）——谢谢配合！
+len_long2|all_zh|zh|随着人工智能技术的快速发展，语音合成系统在自然度和表现力方面取得了显著的进步。现代系统不仅能够准确朗读文本，还能根据上下文调整语调和节奏，甚至模仿特定的说话风格。在边缘计算场景中，低延迟和高效率成为关键要求，这使得模型压缩和硬件优化变得更加重要。
+en_serena|Serena|en|Edge computing brings inference directly to the device, reducing latency and preserving privacy.
+en_vivian|Vivian|en|Please confirm the delivery date for the second batch of orders by Friday afternoon.

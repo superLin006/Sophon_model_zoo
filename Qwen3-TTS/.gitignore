@@ -1,0 +1,11 @@
+# bmodel 产物不入库（gen_final.sh 可重建），models 目录保留 .gitkeep 占位
+models/**/*.bmodel
+models/BM1684X/**/*.bmodel
+models/onnx/
+
+# C++ 编译产物（build.sh 交叉编译生成）
+cpp/build/
+
+# 测试音频/日志不入库（batch 输入与 README 入库）
+test_outputs/**/*.wav
+test_outputs/**/*.log
