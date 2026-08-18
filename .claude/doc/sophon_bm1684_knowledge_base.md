@@ -89,24 +89,24 @@
 | QwenLLM 0.6B | LLM 意图 | w4bf16 | ❌ 28 层误差指数放大，top1 翻转、意图 8/10 格式不稳 |
 | QwenLLM 1.7B | LLM 意图 | **w4bf16** | ✅ 甜点（29 tok/s、9/10） |
 | QwenLLM 4B | LLM 意图 | W4F16(AWQ) | ✅ 冷加载 57.5s |
-| Qwen3-ASR 0.6B | ASR（LLM 类） | **w4bf16 -g 64** | ✅ decode 64-65 tok/s（RTF 0.10）；group 128 失败 |
-| HY-MT 1.8B | 翻译 | w8bf16 / **w4bf16 g64** | ✅ 双版本均可：W8 23.4 / W4 34.5 tok/s（W4 输出偏移略多，作速度档） |
-| Qwen3-TTS talker | 生成式 TTS | **W8BF16 下限** | ❌ W8 以下退化（嵌套自回归 argmax 轨迹翻车） |
+| Qwen3-ASR 0.6B | ASR（LLM 类） | w4bf16 -g64 / **w4f16 -g64** | W4F16 646MB，13 条有效多语种音频 13/13，RTF 中位数 0.128（W8 为 0.161）；质量继续扩大复核 |
+| HY-MT 1.8B | 翻译 | w8bf16 / w4bf16 g64 / **w4f16 g64** | W4F16 61/61 进程成功，decode 中位数 33.21 tok/s；W4F16 与 W4BF16 输出 48/61 一致，作为速度档 |
+| Qwen3-TTS talker | 生成式 TTS | **W4F16 候选 / W8BF16 回退** | W4F16 54 条 batch 54/54，加权 RTF 1.818；人工试听总体稳定，但 en_03/zh_03 有已知异常 |
 | Qwen3-TTS CP | 生成式组件 | F32 组件 + **F16 cache 下限** | ✅ 生成式路径最敏感 |
 
 ### 2.3 决策树（按模型特征）
 
 ```
 模型是什么任务？
-├─ 连续/嵌套自回归输出（TTS 生成式）→ 最低 W8BF16（talker），组件 F32 + cache F16（CP）
-│    INT4/W4 直接放弃，不浪费时间
-├─ 离散 token 输出（ASR / 翻译 / 意图）→ 先试 w4bf16 -g 64：
-│    ├─ 模型 ≥1.7B → 通常可用（HY-MT 1.8B / QwenLLM 1.7B / Eureka 1.7B 全通过）
-│    └─ 模型 ≤0.6B → 高风险（0.6B w4 失败），必须本地噪声模拟先行验证
-│        验证通过才编译；失败退 w8bf16
+├─ 连续/嵌套自回归输出（TTS 生成式）→ 先试 W4F16（需同模型大样本 + 人工试听）
+│    ├─ Qwen3-TTS W4F16：54 条 batch 全部成功，人工试听总体稳定，但保留 2 条已知异常
+│    └─ 未经人工确认的其他生成式模型，不得从该结果外推；W8BF16 作为保守回退
+├─ 离散 token 输出（ASR / 翻译 / 意图）→ 先试 w4bf16 -g 64 或 w4f16：
+│    ├─ 每种激活 dtype 都要独立实测；W4F16 不是 W4BF16 的无风险替换
+│    └─ 质量不稳定退回 W8BF16
 └─ 非 LLM 编码器类（encoder/CTC/Transducer）→ F16 为主力（whisper/sensevoice/zipformer）
      ├─ 注意 BF16 对 attention 精度不够（whisper cosine 0.51）
-     ├─ W4F16(AWQ) 用于 4bit 且需预量化；W4BF16(PTQ) 直接可用
+     ├─ W4F16/W4BF16 需分别验证，不以编译成功代替质量验证
      └─ INT8 已试失败（whisper）；W4A8 硬件不支持（仅 BM1688）
 ```
 
@@ -132,7 +132,7 @@
 | BF16 | BFloat16 | 慎用：attention 累加精度不足（whisper 失败案例） |
 | W8BF16 | 8bit 权重 | 损失小但体积偏大 → **仅兜底** |
 | W4BF16 | 4bit 权重 + bf16 激活 | **体积/精度最佳目标**；PTQ 直接可用；必须 `-g 64`（group 128 失败） |
-| W4F16 | 4bit 权重 + fp16 激活（AWQ） | 需预量化权重；仅 `--quantize w4f16`（勿混 w4bf16） |
+| W4F16 | 4bit 权重 + fp16 激活（AWQ/LLM） | 与 W4BF16 是不同激活路径；llm_convert 模型 config 必须声明 F16，必须逐模型验证（Qwen3-TTS/Qwen3-ASR/HY-MT 已分别实测） |
 | INT4 | 整型 4bit | 仅 ChatTTS GPT 验证过；其余待实验 |
 | INT8 | 整型 8bit | whisper 已试失败（精度崩 + 编译 abort） |
 | W4A8 | 4bit 权重 8bit 激活 | **BM1684X 硬件不支持**（仅 BM1688） |

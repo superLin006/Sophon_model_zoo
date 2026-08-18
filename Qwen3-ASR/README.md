@@ -21,9 +21,12 @@ audio tokens。流式每块全量重编码（固定 0.08s，1s 块下实时）�
 
 ```bash
 # 编译（docker sophon-tpumlir，TPU-MLIR v1.28.1；容器内需 torch 2.4.1 + transformers 4.57.6）
-# LLM（536MB）：标准 Qwen3 w4bf16 group64（-g 64 必加），KV bf16，seq512
+# LLM（W4BF16，既有主档）：标准 Qwen3 w4bf16 group64（-g 64 必加），KV bf16，seq512
 llm_convert.py -m models_llm_std -s 512 --quantize w4bf16 -g 64 -c bm1684x \
     --out_dir qwen3_asr_std_w4g64_512
+# LLM（W4F16，独立实验档）：config.json 的 dtype 必须为 float16，权重可沿用标准目录
+llm_convert.py -m models_llm_std_f16 -s 512 --quantize w4f16 -g 64 -c bm1684x \
+    --out_dir qwen3_asr_std_w4f16_512
 # 全量 encoder（110MB）：3000 帧输入 + W4BF16 + 必加 --disable_layer_group
 cd compile && python export_encoder_onnx.py --model_path ../models --num_mel_frames 3000 \
     --out_dir ./tmp/onnx_enc3000
@@ -36,19 +39,30 @@ model_tool --combine tmp/encoder_full.bmodel qwen3_asr_std_w4g64_512/*.bmodel \
     -o models/BM1684X/qwen3_asr_merged_w4g64.bmodel
 ```
 
-**上板**（纯 bmrt C++，`cpp/`；单文件时 encoder/LLM 共享同一个 bmrt，内存单份）：
+### W4F16 试验结果（2026-08-18）
+
+在全量 3000 帧 encoder + seq512 LLM 方案上，新增 W4F16 实验档位：
+
+| 版本 | 合并 bmodel 大小 | 有效测试 | 加权/中位数 RTF | 状态 |
+|---|---:|---:|---:|---|
+| W8BF16 | 987,545,600 B（约 942MB） | 13/13 | 0.161（中位数） | 精度基线 |
+| W4BF16 g64 | 676,376,576 B（约 646MB） | 已有验证 | — | 既有 4bit 档 |
+| **W4F16 g64** | **676,376,576 B（约 646MB）** | **13/13** | **0.128（中位数）** | 已上板，继续质量复核 |
+
+W4F16 的 60 个网络已合并为 `models/BM1684X/qwen3_asr_merged_w4f16.bmodel`。首次测试发现 C++ 运行时原先把 LLM hidden/embedding 按 BF16 写入，而 W4F16 网络要求 F16；现已改为按 bmodel 的 input/output dtype 动态转换。修复后离线和流式均能正常转写，W8BF16 使用同一新版二进制回归正常。
+
+受控测试中，W4F16 13 条有效多语种音频全部成功；60 秒音频失败属于当前 encoder 的 30 秒硬上限。W4F16 RTF 存在板卡运行抖动，表中使用正式多轮的中位数，不将单次最低值当作最终性能结论。质量仍需更大数据集和人工复核后，才能决定是否替换 W8BF16。
+
+W4F16 的上板运行方式与 W4BF16 相同，仅替换 bmodel：
+
 ```bash
-./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4g64.bmodel \
-    --model_dir . --audio test_data/test_zh.wav          # 离线（单文件）
-./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4g64.bmodel \
-    --model_dir . --stream --audio test_data/test_zh.wav  # 流式（全量重编码 + 全量 prefill）
+./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4f16.bmodel \
+    --model_dir . --audio test_data/test_zh.wav
+./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4f16.bmodel \
+    --model_dir . --stream --audio test_data/test_zh.wav
 ```
 
-**实测**（test_zh 5.6s）：端到端 **0.58s（RTF 0.10）**，decode **64-65 tok/s**（13~83 tokens 稳定），
-内存净占 **~1.1GB**。输出 `language Chinese<asr_text>转写`（自动语言识别，无需手动指定），
-中英德法西日六语种与原生一致。
-
-> 注：官方 `--qwen_asr` 方案（qwen_asr 包版权重 + chunk encoder）曾做对照——其长音频会漏段且 20s 直接崩溃，
+官方 `--qwen_asr` 方案（qwen_asr 包版权重 + chunk encoder）曾做对照——其长音频会漏段且 20s 直接崩溃，
 > 已弃用（本方案与官方 Python/transformers 行为一致，转写更完整）。
 
 

@@ -1,0 +1,40 @@
+zh_01|Vivian|Chinese|春天来了，深圳的空气里有淡淡的花香。
+zh_02|Serena|Chinese|请在今天下午五点之前提交最终版本的报告。
+zh_03|Uncle_Fu|Chinese|这台设备的额定电压是二百二十伏，最大功率为一千二百瓦。
+zh_04|Aiden|Chinese|我们将在下周一上午九点召开项目评审会议。
+zh_05|Ryan|Chinese|如果网络连接中断，请等待十秒后再重新尝试。
+zh_06|Vivian|Chinese|这家餐厅距离地铁站只有三百米，步行大约需要五分钟。
+zh_07|Serena|Chinese|请注意保存文件，系统将在二十分钟后自动重启。
+zh_08|Uncle_Fu|Chinese|合同中明确规定，延迟交付一天将扣除百分之零点五的服务费。
+zh_09|Aiden|Chinese|研发团队正在优化推理速度，同时降低设备的整体功耗。
+zh_10|Ryan|Chinese|从今天开始，所有生产变更都必须经过两位工程师审核。
+zh_11|all_zh|Chinese|欢迎使用我们的语音合成系统，祝你今天工作顺利。
+zh_12|all_zh|Chinese|请把会议纪要发送给所有参会人员，并标注需要跟进的事项。
+zh_13|all_zh|Chinese|这段文字包含逗号、句号、冒号、分号以及括号等多种标点。
+zh_14|all_zh|Chinese|温度从零下五度升高到二十八度，天气逐渐变得温暖起来。
+zh_15|all_zh|Chinese|订单编号是 A20260817，验证码为 739204，请仔细核对。
+zh_16|all_zh|Chinese|Qwen3-TTS 可以在 BM1684X 上运行，当前序列长度设置为 192。
+zh_17|all_zh|Chinese|HTTP 和 HTTPS 使用不同的协议，但都可以传输网页内容。
+zh_18|all_zh|Chinese|本次实验的目标是比较 W4F16 与 W8BF16 的合成质量和推理速度。
+zh_19|all_zh|Chinese|数据表明，模型大小从一点五 GB 降低到一点一 GB，但仍然需要人工试听确认。
+zh_20|all_zh|Chinese|在边缘计算场景中，低延迟、低功耗和稳定的输出质量同样重要。
+zh_21|all_zh|Chinese|随着人工智能技术不断发展，语音交互正在进入更多日常应用场景。
+zh_22|all_zh|Chinese|长文本合成不仅考验模型的自然度，也考验缓存管理和解码逻辑的稳定性。
+zh_23|all_zh|Chinese|请按照文档中的步骤操作，如果遇到异常，请保留完整日志再联系技术支持。
+zh_24|all_zh|Chinese|今天的测试覆盖了普通句子、英文缩写、数字、百分比、单位和复杂标点。
+zh_25|all_zh|Chinese|当输入文本较长时，系统会根据最大序列长度截断超出的语音帧。
+zh_26|all_zh|Chinese|我们需要对每一种量化方案进行独立验证，不能仅凭模型能够加载就判断质量合格。
+zh_27|all_zh|Chinese|语音听起来是否自然，应该由人工试听结合转写结果共同判断。
+zh_28|all_zh|Chinese|如果 W4F16 在更多样本上保持稳定，它可能成为体积和精度之间更好的折中方案。
+zh_29|all_zh|Chinese|实验结束后将清理板卡上的临时文件，但会保留本地模型和测试日志。
+zh_30|all_zh|Chinese|这是一段中等长度的中文内容，用来观察不同音素之间的连接是否平滑自然。
+en_01|Vivian|English|The device completed the benchmark without errors and produced clear speech.
+en_02|Serena|English|Please send the final report before the meeting starts tomorrow morning.
+en_03|Uncle_Fu|English|Edge computing reduces latency while keeping sensitive data on the device.
+en_04|Aiden|English|The quick brown fox jumps over the lazy dog near the quiet mountain lake.
+en_05|Ryan|English|Please verify the serial number and confirm the delivery date by Friday afternoon.
+en_06|Vivian|English|The new compiler reduces memory usage and improves inference speed on the BM1684X.
+en_07|Serena|English|Quality evaluation requires both automated measurements and careful human listening.
+en_08|Uncle_Fu|English|The system should remain stable during long audio generation and repeated model loading.
+en_09|Aiden|English|Numbers such as one hundred twenty three point four five and twelve percent must be pronounced correctly.
+en_10|Ryan|English|This is a longer English paragraph designed to test rhythm, pauses, pronunciation, and stability across many words.

@@ -14,9 +14,9 @@ Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP
 | [VITS-MeloTTS](vits-melo-tts-zh_en/) | 文本转语音（中英双语） | FP32 | RTF ~0.12 | ✅ 完成 |
 | [Eureka-Audio](Eureka-Audio/) | 音频指令分类（whisper encoder + Qwen3-1.7B） | W4BF16 | 准确率 ~90%，端到端 ~2.3s/条（Python·sail / C++ 均跑通） | ✅ 完成 |
 | [QwenLLM 系列](QwenLLM/) | LLM 意图识别（Qwen3-0.6B，v95 系列） | W4BF16 / W8BF16 | v95 recall + 意图分类组合，FTL ~0.3s | ✅ 完成 |
-| [Qwen3-ASR](Qwen3-ASR/) | 语音识别 + 语种识别（30 语种 + 22 中文方言，LLM 类） | W4BF16(g64) | 单文件 646MB，RTF 0.10（~0.6s），decode 64-65 tok/s，流式实时 | ✅ 完成 |
-| [Qwen3-TTS](Qwen3-TTS/) | 文本转语音（12Hz 流式 codec，多音色/多语言，0.6B） | talker W8BF16 + CP F32/F16 | batch RTF ~1.85（3 bmodel 合并版，14/14 验证通过） | ✅ 完成 |
-| [HY-MT](HY-MT/) | 机器翻译（HY-MT1.5-1.8B，中英/日中/中日等多语对） | W8BF16 / W4BF16(g64) | decode 23.4 / 34.5 tok/s，61 用例全量回归通过 | ✅ 完成 |
+| [Qwen3-ASR](Qwen3-ASR/) | 语音识别 + 语种识别（30 语种 + 22 中文方言，LLM 类） | W8BF16 / W4BF16(g64) / W4F16(g64) | W4F16 单文件 646MB，13 条有效多语种音频 13/13；受控 RTF 中位数 0.128（W8 0.161），质量继续复核 | ✅ 已上板验证 |
+| [Qwen3-TTS](Qwen3-TTS/) | 文本转语音（12Hz 流式 codec，多音色/多语言，0.6B） | talker W4F16/W8BF16 + CP F32/F16 | W4F16 54 条 54/54，加权 RTF 1.818；talker 1.14GB，人工试听总体稳定（2 条已知异常） | ✅ 完成 |
+| [HY-MT](HY-MT/) | 机器翻译（HY-MT1.5-1.8B，中英/日中/中日等多语对） | W8BF16 / W4BF16(g64) / W4F16(g64) | W4F16 61/61，decode 中位数 33.21 tok/s；W8 23.31 tok/s，W4 仅作为速度档 | ✅ 完成 |
 
 ## 项目结构
 
@@ -40,7 +40,7 @@ Sophon_model_zoo/
 ├── Eureka-Audio/             # 音频指令分类（whisper encoder + Qwen3-1.7B，Python·sail + C++）
 ├── Qwen3-ASR/                # Qwen3-ASR-0.6B 语音识别 + 语种识别（C++ bmrt + sail，支持流式）
 ├── Qwen3-TTS/                # Qwen3-TTS-12Hz-0.6B 语音合成（纯 bmruntime C++，批量模式）
-├── HY-MT/                    # HY-MT1.5-1.8B 机器翻译（W8/W4 双版本板卡部署）
+├── HY-MT/                    # HY-MT1.5-1.8B 机器翻译（W8/W4BF16/W4F16 三档实测）
 └── QwenLLM/                  # Qwen 系列 LLM 意图识别（v95 系列）
     ├── LLM-TPU/              # sophgo 官方 demo（不入库，本地克隆）
     ├── scripts/              # 编译/部署/下载脚本
@@ -88,19 +88,19 @@ conda activate sophon-export
 - [chatTTS/README.md](chatTTS/README.md)
 - [vits-melo-tts-zh_en/README.md](vits-melo-tts-zh_en/README.md)
 - [Eureka-Audio/](Eureka-Audio/)
-- [Qwen3-ASR/](Qwen3-ASR/)
-- [Qwen3-TTS/](Qwen3-TTS/)（语音合成，含 3 bmodel 合并与批量合成说明）
-- [HY-MT/](HY-MT/)（机器翻译，含 61 用例回归与 W8/W4 对比）
+- [Qwen3-ASR/](Qwen3-ASR/)（语音识别，含 W8/W4BF16/W4F16 单文件与流式验证）
+- [Qwen3-TTS/](Qwen3-TTS/)（语音合成，含 W4F16/W8 A/B、3 bmodel 合并与批量合成说明）
+- [HY-MT/](HY-MT/)（机器翻译，含 61 用例回归与 W8/W4BF16/W4F16 对比）
 - [QwenLLM/](QwenLLM/)
 
 ## 技术要点
 
 - **芯片**: Sophon BM1684X，SDK-23.09 LTS SP4
 - **转换工具**: TPU-MLIR v1.28.1（`sophgo/tpuc_dev:latest`）
-- **LLM 转换**: `llm_convert.py`，AWQ 量化只支持 `--quantize w4f16`
-- **容器 transformers 版本**: 固定 4.51.1（`pip install transformers==4.51.1`），5.x 与 PyTorch 2.1.0+cpu 不兼容
+- **LLM 转换**: `llm_convert.py` 支持 `w8bf16`、`w4bf16`、`w4f16` 等档位；W4 方案必须按模型逐一实测，不能仅凭转换成功判断质量
+- **LLM 转换容器环境**: TPU-MLIR 1.28.1 的标准 Qwen3/HY-MT 转换使用 torch 2.4.1+cpu、transformers 4.57.6、`huggingface-hub<1.0`；旧镜像中的 torch 2.1/transformers 5.x 可能在 dtype 初始化阶段失败
 - **交叉编译**: Ubuntu 20.04 + gcc 9.4（兼容板卡 glibc 2.31）
 - **大模型编译**: bmodel > 500MB 的网络（如 whisper turbo encoder 1.3G）`model_deploy.py` 必须加 `--disable_layer_group`，否则 v1.28.1 的 layer_group 优化会让推理时板卡 kernel panic 重启
 - **大 ONNX 导出**: >2GB 模型导出需 ≥12GB 内存（WSL 默认仅 8GB 会 OOM），且要跳过 onnxsim、用 external data 另存以避开 protobuf 2GB 上限
-- **生成式模型量化下限**（Qwen3-TTS 实测铁证）: TPU 量化网络层内激活以量化 dtype 存储（bf16 尾数 7 位/f16 10 位），自回归 argmax 轨迹会翻车 → talker 最低 W8BF16、CP cache 最低 F16、CP 组件保持 F32；CPU torch bf16（eager fp32 层内）正常，说明是编译器层内激活精度限制而非模型不可量化
+- **生成式模型量化**: Qwen3-TTS talker 的 W4F16 已在 54 条板卡 batch 中验证总体稳定，但 `en_03`、`zh_03` 有已知音质异常；CP 组件保持 F32、cache 保持 F16。W8BF16 仍作为保守回退。Qwen3-ASR/HY-MT 的 W4F16 结论仅适用于各自已测模型和数据集，不能跨模型泛化
 - **转换中间产物落盘**: `model_deploy.py` 的 npz/mlir/json 中间产物写入**当前工作目录**，编译脚本必须 `cd` 到输出目录（如 Qwen3-TTS 的 `gen_final.sh`），否则会散落到仓库根目录（一次 7.5G 的教训）

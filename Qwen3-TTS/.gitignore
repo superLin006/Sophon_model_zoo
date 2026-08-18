@@ -9,4 +9,5 @@ cpp/build/
 # 测试音频/日志不入库（batch 输入与 README 入库）
 test_outputs/**/*.wav
 test_outputs/**/*.log
-cpp/test/bm_test_cp
+# W4F16 独立实验组件与编译日志
+models/BM1684X/w4f16_experiment/

@@ -39,6 +39,16 @@ docker exec sophon-tpumlir-v128 bash \
   /workspace/HY-MT/models/BM1684X/w8bf16_seq512
 ```
 
+W4F16 使用同一 patch 和 `-g 64`，但模型 config 的 `dtype` 需要设置为 `float16`；权重可使用硬链接副本，避免复制 4GB safetensors：
+
+```bash
+docker exec sophon-tpumlir-v128 bash -lc \
+  'python3 /workspace/HY-MT/compile/patch_tpumlir_hymt.py && \
+   llm_convert.py -m /workspace/HY-MT/compile/tmp/HY-MT1.5-1.8B-f16 \
+   -s 512 --quantize w4f16 -g 64 -c bm1684x \
+   --out_dir /workspace/HY-MT/compile/tmp/w4f16_seq512'
+```
+
 ## 板端部署位置
 
 板卡上的两个版本相互独立，可直接交给测试同事：
@@ -72,14 +82,13 @@ REPEATS=5 ./board_perf_stability.sh /data/hymt_w4g64
 
 扩展的 16 项短/中/长测试结果：
 
-| 版本 | 大小 | 对原生 BF16 逐字一致 | 平均字符相似度 | prefill 均值 | decode 均值 |
+| 版本 | 大小 | 质量/回归结果 | 平均字符相似度 | prefill 均值 | decode 均值 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | W8BF16 | 1.98 GiB | 9/16 | 0.964 | 205.83 ms | 23.06 token/s |
 | W4BF16 g64 | 1.26 GiB | 3/16 | 0.815 | 203.45 ms | 34.41 token/s |
+| **W4F16 g64** | **1.26 GiB** | **W4 档，61/61 进程成功** | — | **205.98 ms** | **33.21 token/s（中位数）** |
 
-W4BF16 g64 的平均 decode 吞吐提升 49.24%，但输出偏移明显多于 W8，建议作为速度档；
-默认交付仍采用 W8BF16。KV cache 当前为 BF16，改成 FP16 仍是 16 bit，不会降低 cache
-带宽或容量，预计收益远小于权重量化，暂不作为首要优化项。
+W4F16 g64 与 W4BF16 g64 的模型体积相同；61 条回归中两者输出有 48/61 条完全一致，说明 W4F16 没有恢复 W8BF16 的输出轨迹。W4F16 的 decode 中位数为 33.21 token/s，略低于 W4BF16 的 34.35 token/s，但比 W8BF16 的 23.31 token/s 快约 42.5%。格式标签、术语和长文本仍存在 W4 档共同的质量偏移，因此 W4F16 仅作为速度档，默认交付继续采用 W8BF16。KV cache 当前为 BF16，改成 FP16 仍是 16 bit，不会降低 cache 带宽或容量。
 
 W4 的短/中/长代表用例各重复 3 次，输出均确定一致。decode 均值分别为
 34.88、34.03、33.64 token/s，样本标准差分别为 0.04、0.74、0.55 token/s。

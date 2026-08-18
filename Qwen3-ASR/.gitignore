@@ -15,4 +15,13 @@ cpp/build/
 # Python
 __pycache__/
 *.pyc
-models_qwenasr/
+# W4F16 实验生成物
+compile/*.json
+compile/*.mlir
+compile/*.npz
+compile/*.txt
+compile/*.prototxt
+compile/w4f16_llm_*/
+models_llm_std_f16/
+test_data/bench*/
+test_outputs/

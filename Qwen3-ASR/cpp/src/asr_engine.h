@@ -45,7 +45,7 @@ private:
 };
 
 // ── Qwen3Bmodel ──────────────────────────────────────────────────────────────
-// 封装 qwen3_asr_llm_w4bf16_*.bmodel（inputs_embeds 版）
+// 封装标准 Qwen3 LLM bmodel（w4bf16/w4f16/w8bf16 等激活 dtype）
 // 网络：embedding_cache / block_i / block_cache_i / lm_head / greedy_head
 // decode 修正（vs Eureka 的 off-by-one）：pos = token_length、KV 写回 slot token_length
 class Qwen3Bmodel {
@@ -84,7 +84,7 @@ private:
     std::vector<const bm_net_info_t*> net_blocks_;
     std::vector<const bm_net_info_t*> net_blocks_cache_;
 
-    // KV cache 常驻 device：[1,SEQ,N_KV,HEAD] f32/层
+    // KV cache 常驻 device：[1,SEQ,N_KV,HEAD]，dtype 按 block_cache 输入声明
     std::vector<bm_device_mem_t> past_key_dev_;
     std::vector<bm_device_mem_t> past_value_dev_;
     size_t kv_layer_bytes_ = 0;
@@ -110,11 +110,11 @@ private:
     bm_device_mem_t pre_v_;
     bool pre_io_ready_ = false;
 
-    uint16_t mask_bf16_ = 0xC61C;   // attention mask -inf 值（bf16）
+    uint16_t mask_neg_inf_ = 0xC61C;   // attention mask -inf 值（按 BF16/F16 输入 dtype）
     int cur_token_ = 0;
     bool inited_ = false;
 
-    // hidden f32 → bf16 → lm_head → argmax（标准 Qwen3 bmodel 全 bf16 链）
+    // hidden f32 → bmodel activation dtype → lm_head → argmax
     int lm_head_argmax(const float* hidden_f32);
 };
 

@@ -177,14 +177,14 @@ bool Qwen3Bmodel::init(bm_handle_t handle, const std::string& path) {
     printf("[Qwen3] loaded %s\n", path.c_str());
     init_by_names();
 
-    // KV 为 F16（KV 量化 bmodel：block_cache 的 past_k/v 输入 dtype 是 FLOAT16）
+    // KV cache dtype follows block_cache input dtype (F16 for W4F16, BF16 for W4/W8BF16).
     // 用 net 的 input dtype 判断字节数
     bm_data_type_t kv_dtype = net_blocks_cache_[0]->input_dtypes[3];
     int kv_bytes_per_elem = (kv_dtype == BM_FLOAT32) ? 4 : 2;
     kv_layer_bytes_ = (size_t)SEQLEN * kv_per_token_ * kv_bytes_per_elem;
     kv_token_bytes_ = (size_t)kv_per_token_ * kv_bytes_per_elem;
     // mask -inf 值按输入 dtype：fp16=0xF0E2，bf16=0xC61C（QwenEngine 规则，混用会致屏蔽失效）
-    mask_bf16_ = (net_blocks_[0]->input_dtypes[2] == BM_FLOAT16) ? 0xF0E2 : 0xC61C;
+    mask_neg_inf_ = (net_blocks_[0]->input_dtypes[2] == BM_FLOAT16) ? 0xF0E2 : 0xC61C;
     // addr mode 1：KV 常驻 buffer 直接用网络预分配的 input_mems[3]/[4]（QwenEngine 同款）
     past_key_dev_.resize(NUM_LAYERS);
     past_value_dev_.resize(NUM_LAYERS);
@@ -273,7 +273,27 @@ static int lm_greedy(void* rt, bm_handle_t h, const bm_net_info_t* lm,
     return token;
 }
 
-// fp32 → bf16（四舍五入，Eureka 同款）
+// FP32 ↔ 16-bit activation conversion follows each bmodel's declared dtype.
+static uint16_t fp32_to_f16(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    uint32_t sign = (bits >> 16) & 0x8000u;
+    int exp = (int)((bits >> 23) & 0xffu) - 127 + 15;
+    uint32_t mant = bits & 0x7fffffu;
+    if (exp <= 0) {
+        if (exp < -10) return (uint16_t)sign;
+        mant |= 0x800000u;
+        int shift = 14 - exp;
+        uint32_t half = mant >> shift;
+        if ((mant >> (shift - 1)) & 1u) half++;
+        return (uint16_t)(sign | half);
+    }
+    if (exp >= 31) return (uint16_t)(sign | 0x7c00u);
+    uint32_t half = sign | ((uint32_t)exp << 10) | (mant >> 13);
+    if (mant & 0x1000u) half++;
+    return (uint16_t)half;
+}
+
 static std::vector<uint16_t> fp32_to_bf16_vec(const float* data, int n) {
     std::vector<uint16_t> out(n);
     for (int i = 0; i < n; i++) {
@@ -284,13 +304,60 @@ static std::vector<uint16_t> fp32_to_bf16_vec(const float* data, int n) {
     }
     return out;
 }
-// bf16 → fp32
+
+static std::vector<uint16_t> fp32_to_f16_vec(const float* data, int n) {
+    std::vector<uint16_t> out(n);
+    for (int i = 0; i < n; i++) out[i] = fp32_to_f16(data[i]);
+    return out;
+}
+
+static std::vector<uint16_t> fp32_to_activation_vec(const float* data, int n,
+                                                     bm_data_type_t dtype) {
+    return dtype == BM_FLOAT16 ? fp32_to_f16_vec(data, n)
+                                : fp32_to_bf16_vec(data, n);
+}
+
 static void bf16_to_fp32_vec(const uint16_t* in, int n, float* out) {
     for (int i = 0; i < n; i++) {
         uint32_t u = (uint32_t)in[i] << 16;
         float f; memcpy(&f, &u, 4);
         out[i] = f;
     }
+}
+
+static void f16_to_fp32_vec(const uint16_t* in, int n, float* out) {
+    for (int i = 0; i < n; i++) {
+        uint16_t h = in[i];
+        uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+        uint32_t exp = (h >> 10) & 0x1fu;
+        uint32_t mant = h & 0x3ffu;
+        uint32_t bits;
+        if (exp == 0) {
+            if (mant == 0) {
+                bits = sign;
+            } else {
+                exp = 1;
+                while (!(mant & 0x400u)) { mant <<= 1; exp--; }
+                mant &= 0x3ffu;
+                bits = sign | ((exp + 127 - 15) << 23) | (mant << 13);
+            }
+        } else if (exp == 31) {
+            bits = sign | 0x7f800000u | (mant << 13);
+        } else {
+            bits = sign | ((exp + 127 - 15) << 23) | (mant << 13);
+        }
+        memcpy(&out[i], &bits, 4);
+    }
+}
+
+static void activation16_to_fp32_vec(const uint16_t* in, int n, float* out,
+                                     bm_data_type_t dtype) {
+    if (dtype == BM_FLOAT16) f16_to_fp32_vec(in, n, out);
+    else bf16_to_fp32_vec(in, n, out);
+}
+
+static size_t dtype_bytes(bm_data_type_t dtype) {
+    return dtype == BM_FLOAT32 ? sizeof(float) : sizeof(uint16_t);
 }
 
 int Qwen3Bmodel::forward_first(const std::vector<int>& input_ids, int tlen,
@@ -301,7 +368,7 @@ int Qwen3Bmodel::forward_first(const std::vector<int>& input_ids, int tlen,
 
     // 1. pos + mask 预填一次（mask -inf 值按 dtype：fp16=0xF0E2，bf16=0xC61C）
     std::vector<int>   position_id(S, 0);
-    std::vector<uint16_t> attention_mask((size_t)S * S, mask_bf16_);
+    std::vector<uint16_t> attention_mask((size_t)S * S, mask_neg_inf_);
     for (int i = 0; i < tlen; i++) position_id[i] = i;
     for (int i = 0; i < tlen; i++)
         for (int j = 0; j <= i; j++)
@@ -324,10 +391,11 @@ int Qwen3Bmodel::forward_first(const std::vector<int>& input_ids, int tlen,
             fprintf(stderr, "[Qwen3] embedding launch failed\n"); return -1;
         }
         bm_thread_sync(handle_);
-        std::vector<uint16_t> e_bf16((size_t)tlen * H);
-        bm_memcpy_d2s_partial_offset(handle_, e_bf16.data(), e_out,
-                                     (size_t)tlen * H * 2, 0);
-        bf16_to_fp32_vec(e_bf16.data(), (size_t)tlen * H, embeds.data());
+        std::vector<uint16_t> e_activation((size_t)tlen * H);
+        bm_memcpy_d2s_partial_offset(handle_, e_activation.data(), e_out,
+                                     (size_t)tlen * H * dtype_bytes(net_embed_->output_dtypes[0]), 0);
+        activation16_to_fp32_vec(e_activation.data(), (size_t)tlen * H, embeds.data(),
+                                 net_embed_->output_dtypes[0]);
     }
 
     // 3. audio embeds 替换占位位置
@@ -336,20 +404,21 @@ int Qwen3Bmodel::forward_first(const std::vector<int>& input_ids, int tlen,
                audio_embeds.size() * sizeof(float));
     }
 
-    // 4. embeds（f32）→ bf16 → dev buffer（层间 d2d 中转）
-    auto emb_bf16 = fp32_to_bf16_vec(embeds.data(), (size_t)S * H);
-    bm_memcpy_s2d(handle_, pre_hidden_a_, emb_bf16.data());
+    // embeds（f32）→ bmodel 声明的 F16/BF16 → dev buffer（层间 d2d 中转）
+    auto emb_activation = fp32_to_activation_vec(
+        embeds.data(), (size_t)S * H, net_blocks_[0]->input_dtypes[0]);
+    bm_memcpy_s2d(handle_, pre_hidden_a_, emb_activation.data());
 
     // 5. 28 层（addr mode 1：用网络预分配 input_mems；每层 launch 后必须 sync——
     //    bmrt_launch_tensor_ex 是异步的，CPU 不被阻塞）
-    const size_t hidden_t_bytes = (size_t)tlen * H * 2;   // bf16 有效段
+    const size_t hidden_t_bytes = (size_t)tlen * H * dtype_bytes(net_blocks_[0]->input_dtypes[0]);
     for (int i = 0; i < NUM_LAYERS; i++) {
         auto net = net_blocks_[i];
         auto& in0 = net->stages[0].input_mems[0];
         auto& in1 = net->stages[0].input_mems[1];
         auto& in2 = net->stages[0].input_mems[2];
         if (i == 0) {
-            bm_memcpy_s2d(handle_, in0, emb_bf16.data());
+            bm_memcpy_s2d(handle_, in0, emb_activation.data());
         }
         if (i == 0) {   // pos/mask 各层共享同一 input_mem（已验证地址相同），只传一次
             bm_memcpy_s2d(handle_, in1, position_id.data());
@@ -383,8 +452,9 @@ int Qwen3Bmodel::forward_first(const std::vector<int>& input_ids, int tlen,
     const bm_net_info_t* last_net = net_blocks_[NUM_LAYERS - 1];
     auto& lm_in  = net_lm_->stages[0].input_mems[0];
     auto& lm_out = net_lm_->stages[0].output_mems[0];
+    size_t hidden_bytes = dtype_bytes(net_lm_->input_dtypes[0]);
     bm_memcpy_d2d_byte(handle_, lm_in, 0, last_net->stages[0].output_mems[0],
-                       (size_t)(tlen - 1) * H * 2, (size_t)H * 2);
+                       (size_t)(tlen - 1) * H * hidden_bytes, H * hidden_bytes);
     bm_thread_sync(handle_);
     bm_tensor_t lt_in, lt_out;
     bmrt_tensor_with_device(&lt_in,  lm_in,  net_lm_->input_dtypes[0],  net_lm_->stages[0].input_shapes[0]);
@@ -401,12 +471,13 @@ int Qwen3Bmodel::forward_first(const std::vector<int>& input_ids, int tlen,
     return token;
 }
 
-// hidden（f32 host）→ bf16 → lm_head → argmax
+// hidden（f32 host）→ bmodel activation dtype → lm_head → argmax
 int Qwen3Bmodel::lm_head_argmax(const float* hidden_f32) {
-    auto h_bf16 = fp32_to_bf16_vec(hidden_f32, hidden_size_);
     int vocab = net_lm_->stages[0].output_shapes[0].dims[2];
     std::vector<float> logits(vocab);
-    launch_host(p_bmrt_, handle_, net_lm_, { h_bf16.data() }, { logits.data() });
+    auto h_activation = fp32_to_activation_vec(
+        hidden_f32, hidden_size_, net_lm_->input_dtypes[0]);
+    launch_host(p_bmrt_, handle_, net_lm_, { h_activation.data() }, { logits.data() });
     return argmax_logits(logits);
 }
 
@@ -421,7 +492,7 @@ int Qwen3Bmodel::forward_next() {
 
     // decode mask（按 dtype 选 -inf 值）：0..pos 与 SEQ 位（新 key）可见
     std::vector<uint16_t> attention_mask(SEQLEN + 1, 0);
-    for (int i = pos + 1; i < SEQLEN; i++) attention_mask[i] = mask_bf16_;   // 无效槽位屏蔽
+    for (int i = pos + 1; i < SEQLEN; i++) attention_mask[i] = mask_neg_inf_;   // 无效槽位屏蔽
     int32_t position_id = pos;
 
     // embedding_cache：token ids → hidden（网络 mem 流转）
@@ -476,7 +547,8 @@ int Qwen3Bmodel::forward_next() {
     auto& lm_in  = net_lm_->stages[0].input_mems[0];
     auto& lm_out = net_lm_->stages[0].output_mems[0];
     auto& last_out = net_blocks_cache_[NUM_LAYERS-1]->stages[0].output_mems[0];
-    bm_memcpy_d2d_byte(handle_, lm_in, 0, last_out, 0, (size_t)H * 2);
+    size_t decode_hidden_bytes = dtype_bytes(net_lm_->input_dtypes[0]);
+    bm_memcpy_d2d_byte(handle_, lm_in, 0, last_out, 0, H * decode_hidden_bytes);
     bm_thread_sync(handle_);   // d2d 异步，必须 sync 后再 launch lm_head
     bm_tensor_t lt_in, lt_out;
     bmrt_tensor_with_device(&lt_in,  lm_in,  net_lm_->input_dtypes[0],  net_lm_->stages[0].input_shapes[0]);

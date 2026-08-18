@@ -8,6 +8,7 @@ Qwen3-TTS-12Hz-0.6B-CustomVoice 语音合成在 Sophon BM1684X 上的推理实�
 | 文件 | 大小 | 说明 |
 |---|---|---|
 | `qwen3_tts_talker_w8s192.bmodel` | 1.5G | talker W8BF16，SEQLEN=192（56 层网络 + 2 embedding + codec_head） |
+| `w4f16_experiment/qwen3_tts_talker_w4f16s192.bmodel` | 1.14G | talker W4F16，group64，独立实验产物（不覆盖 W8） |
 | `qwen3_tts_cp_allf32.bmodel` | 696M | code_predictor 40 网络：5 prefill F32 + 5 cache **F16 16槽** + 15 lm_head F32 + 15 embedding F32 |
 | `codec_decoder.bmodel` | 235M | codec 解码 F16 |
 
@@ -46,11 +47,16 @@ bash deploy_to_board.sh      # 上传 3 bmodel + 二进制 + tokenizer 到板卡
 - 采样模式（--sample）默认 seed 42，每句重新播种可复现；NaN/全零 logits 回退 argmax
 - KV cache 设备常驻（talker 28 层 + CP 5 层），decode 零拷贝 + d2d 写槽
 
-## 性能（板卡实测）
+## 性能与量化实测（BM1684X 板卡，2026-08-17）
 
-batch 模式 RTF 均值 ~1.85（14 条混合语料），decode 上限 ~192 帧。
-已知限制：TPU 量化网络层内激活精度不足（bf16 尾数 7 位）→ talker/CP 生成式路径量化退化，
-talker 最低 W8BF16、CP cache 最低 F16（CP 组件保持 F32）。
+54 条相同 batch 语料、同一随机种子、模型常驻模式：
+
+| 版本 | 成功率 | 加权 RTF | Talker 大小 | 三文件总大小 |
+|---|---:|---:|---:|---:|
+| W8BF16 | 54/54 | 1.900 | 1,582,284,800 B | 2,557,792,256 B |
+| W4F16 group64 | 54/54 | **1.818** | **1,141,886,976 B** | **2,117,394,432 B** |
+
+W4F16 相比 W8BF16 的 talker 体积减少 27.8%，三文件总大小减少 17.2%。用户人工试听确认 W4F16 扩展集总体稳定；`en_03`、`zh_03` 两条样本存在明确音质问题，保留为已知限制。当前 W4F16 是体积、速度和质量之间的最佳候选，W8BF16 仍作为保守回退版本。
 
 ## 验证
 
