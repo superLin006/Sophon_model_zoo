@@ -40,7 +40,7 @@ sensevoice/
 ### 环境准备
 
 1. **开发机**（WSL / Linux x86）
-   - Python 3.8+，PyTorch，funasr，onnx，onnxsim
+   - 导出环境：独立 conda 环境（实测 Python 3.10 / torch 2.11.0+cpu / transformers 5.14.1 / onnx 1.21 + onnxsim）；从仓库根目录执行 `conda create -n sophon-sensevoice python=3.10 -y`、`conda run -n sophon-sensevoice python -m pip install --upgrade pip`、`conda run -n sophon-sensevoice python -m pip install -r sensevoice/requirements.txt`
    - Docker（用于 bmodel 转换和交叉编译）
 
 2. **第三方库**（gitignore，需手动准备）
@@ -71,21 +71,16 @@ sensevoice/
 ### Step 1：导出 ONNX
 
 ```bash
-cd sensevoice/python
-python export_onnx.py
+conda run -n sophon-sensevoice --no-capture-output python sensevoice/python/export_onnx.py
 # 首次运行会自动从 ModelScope 下载模型权重
-# 产物：models/onnx/sensevoice_small_sim.onnx
+# 产物：sensevoice/models/onnx/sensevoice_small_sim.onnx
 ```
 
 ### Step 2：转换 bmodel
 
 ```bash
-# 在 TPU-MLIR Docker 内执行（从仓库根目录）
-docker run --rm \
-  -v $(pwd):/workspace \
-  -v $(pwd)/0_Toolkits:/toolkits \
-  sophgo/tpuc_dev:latest \
-  bash /workspace/sensevoice/python/gen_bmodel.sh F16
+# 公共 TPU-MLIR 容器已启动后，从仓库根目录执行
+docker exec sophon-tpumlir-v128 bash /workspace/sensevoice/python/gen_bmodel.sh F16
 
 # 支持 F32（默认）或 F16
 ```
@@ -94,7 +89,8 @@ docker run --rm \
 
 ```bash
 # 先构建交叉编译镜像（只需一次）
-docker build -t sophon-cross-build docker/
+docker build -t sophon-cross-build \
+  -f 3_docker/Dockerfile.cross-build 3_docker
 
 # 交叉编译
 bash sensevoice/cpp/build.sh
@@ -103,16 +99,33 @@ bash sensevoice/cpp/build.sh
 
 ### Step 4：部署到 BM1684X 板卡
 
+部署脚本会上传二进制、指定精度的 bmodel、`tokens.txt` 和可选测试音频，并在上传后执行 md5 校验。默认使用 SSH key，也可以通过 `BOARD_PASS` 临时提供密码。
+
 ```bash
-# 上传二进制
-scp sensevoice/cpp/build/sensevoice_bm1684 root@<board_ip>:/your/path/
+BOARD_IP=<board_ip> \
+  bash sensevoice/deploy_to_board.sh F16 --test
+```
 
-# 上传模型文件（首次）
-scp sensevoice/models/BM1684X/sensevoice_small_F16.bmodel root@<board_ip>:/your/path/models/
-scp /path/to/tokens.txt root@<board_ip>:/your/path/models/
+可用环境变量：
 
-# 在板卡上运行
-./sensevoice_bm1684 models/ test.wav F16
+- `BOARD_IP`：必填，板卡地址
+- `BOARD_USER`：默认 `root`
+- `BOARD_PORT`：默认 `22`
+- `BOARD_DIR`：默认 `/data/sensevoice`
+- `MODEL_DIR`：默认 `sensevoice/models/BM1684X`
+- `BINARY`：默认 `sensevoice/cpp/build/sensevoice_bm1684`
+- `TEST_AUDIO`：默认 `sensevoice/test_data/test_zh.wav`
+
+其中 `tokens.txt` 已随仓库放置在：
+
+```text
+sensevoice/models/BM1684X/tokens.txt
+```
+
+不执行 smoke test 时去掉 `--test`。板卡上的手动运行命令为：
+
+```bash
+./sensevoice_bm1684 models test_data/test.wav F16
 # 参数: <model_dir> <audio.wav> [F32|F16]
 ```
 

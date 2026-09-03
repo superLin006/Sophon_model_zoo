@@ -45,6 +45,12 @@ public:
     // Returns false if file not found
     bool load_speaker(const std::string& spk_emb_path);
 
+    // Load a reference-audio prompt exported by python ChatTTS.save_prompt.
+    // The prompt contains DVAE codes; ref_text must be the exact transcript.
+    bool load_voice_prompt(const std::string& prompt_path,
+                           const std::string& ref_text);
+    void clear_voice_prompt();
+
     // Set speaker embedding directly from float32 array (will be converted to f16)
     void set_speaker(const std::vector<float>& spk_emb_f32);
 

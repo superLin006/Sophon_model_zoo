@@ -2,6 +2,9 @@
 models/
 deploy_package/
 
+# eval_speaker_sim.py 的 speechbrain 音色评估缓存（可重新下载）
+.pretrained_models/
+
 # 测试音频（本地准备/生成，保留 .gitkeep 占位）
 test_data/*.wav
 

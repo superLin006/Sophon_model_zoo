@@ -2,12 +2,14 @@ import os
 import re
 import logging
 import tempfile
+import struct
 from dataclasses import dataclass, asdict
 from typing import Literal, Optional, List, Tuple, Dict, Union
 from json import load
 from pathlib import Path
 import numpy as np
 import torch
+import torchaudio
 from .npuengine import EngineOV
 from .model.vocos_spectral_ops import ISTFT
 from .config import Config
@@ -21,6 +23,9 @@ from .utils import (
 )
 from .utils import logger as utils_logger
 from .norm import Normalizer
+
+# Prompt codes eat the GPT bmodel's fixed SEQLEN=1024 budget (~47 codes/s of audio).
+_REF_MAX_SEC = 5.0
 
 class Chat:
     def __init__(self, logger=logging.getLogger(__name__)):
@@ -63,14 +68,15 @@ class Chat:
         coef=None,
         tpu_id: int = 0,
     ) -> bool:
-        return self._load(
-            tpu_id=tpu_id,
-            coef=coef,
-            **{
-                k: os.path.join(local_path, v)
-                for k, v in asdict(self.config.path).items()
-            },
-        )
+        # 标准目录布局：models/BM1684X/<bmodel>、models/<其它芯片>；asset/tokenizer 仍在 models/ 根。
+        # 统一先找 <local_path>/BM1684X/<name>，找不到再回退 <local_path>/<name>（旧布局兼容）。
+        paths = {
+            k: os.path.join(local_path, "BM1684X", v)
+            if os.path.exists(os.path.join(local_path, "BM1684X", v))
+            else os.path.join(local_path, v)
+            for k, v in asdict(self.config.path).items()
+        }
+        return self._load(tpu_id=tpu_id, coef=coef, **paths)
 
     def unload(self):
         logger = self.logger
@@ -85,12 +91,65 @@ class Chat:
 
     def sample_random_speaker(self) -> str:
         return self.speaker.sample_random()
-    
+
     def sample_random_speaker_num(self) -> str:
         return self.speaker.sample_random_num()
-    
+
     def sample_audio_speaker(self, wav: Union[np.ndarray, torch.Tensor]) -> str:
         return self.speaker.encode_prompt(self.dvae.sample_audio(wav))
+
+    def save_ref_prompt(
+        self, wav_path: str, prompt_path: str, max_sec: float = _REF_MAX_SEC
+    ) -> int:
+        """Encode a reference WAV into the compact binary format used by C++."""
+        return self.save_prompt(
+            self.load_ref_prompt(wav_path, max_sec=max_sec), prompt_path
+        )
+
+    def save_prompt(self, spk_smp: str, prompt_path: str) -> int:
+        """Save an already encoded ``spk_smp`` for the C++ demo."""
+        codes = self.speaker.decode_prompt(spk_smp)
+        if codes.ndim != 2 or codes.size(0) != self.config.gpt.num_vq:
+            raise ValueError("encoded reference prompt has an unexpected shape")
+        frames = codes.size(1)
+        with open(prompt_path, "wb") as f:
+            f.write(struct.pack("<8sII", b"CTTSPRM1", self.config.gpt.num_vq, frames))
+            f.write(
+                codes.t()
+                .contiguous()
+                .to(dtype=torch.int32)
+                .numpy()
+                .astype("<i4")
+                .tobytes()
+            )
+        return frames
+
+    def load_ref_prompt(self, wav_path: str, max_sec: float = _REF_MAX_SEC) -> str:
+        """Encode a reference audio into InferCodeParams.spk_smp for voice cloning.
+
+        Only half of the condition: the caller must also set
+        InferCodeParams.txt_smp to the transcript of that reference audio. Without
+        the aligned text the model treats the prompt audio as already spoken and
+        emits EOS early (longer references truncate harder).
+        """
+        if not self.has_loaded(use_decoder=False):
+            raise RuntimeError("ChatTTS must be loaded before encoding a reference audio")
+        if not os.path.isfile(wav_path):
+            raise FileNotFoundError(wav_path)
+        if max_sec < 0:
+            raise ValueError("max_sec must be >= 0; use 0 to disable trimming")
+
+        sr = self.config.vocos.feature_extractor.init_args.sample_rate
+        wav, src_sr = torchaudio.load(wav_path)
+        if wav.numel() == 0 or wav.size(-1) == 0:
+            raise ValueError("reference audio is empty: %s" % wav_path)
+        wav = wav.to(dtype=torch.float32).mean(dim=0, keepdim=True)
+        if src_sr != sr:
+            wav = torchaudio.functional.resample(wav, src_sr, sr)
+        if max_sec and wav.size(-1) > int(max_sec * sr):
+            self.logger.warning("ref audio trimmed to %.1fs", max_sec)
+            wav = wav[:, : int(max_sec * sr)]
+        return self.sample_audio_speaker(wav[0])
 
     @dataclass(repr=False, eq=False)
     class RefineTextParams:
@@ -109,6 +168,7 @@ class Chat:
     class InferCodeParams(RefineTextParams):
         prompt: str = "[speed_5]"
         spk_emb: Optional[str] = None
+        # Voice cloning: fill with chat.load_ref_prompt(ref_wav).
         spk_smp: Optional[str] = None
         txt_smp: Optional[str] = None
         temperature: float = 0.3
@@ -305,10 +365,13 @@ class Chat:
             )
             result.destroy()
             assert len(wavs), 1
-            params_infer_code.spk_smp = self.sample_audio_speaker(wavs[0])
-            params_infer_code.txt_smp = ''
-        
-        
+            sr = self.config.vocos.feature_extractor.init_args.sample_rate
+            params_infer_code.spk_smp = self.sample_audio_speaker(
+                wavs[0][: int(_REF_MAX_SEC * sr)]
+            )
+            params_infer_code.txt_smp = refer_text
+
+
         if stream:
             length = 0
             pass_batch_count = 0
@@ -324,7 +387,7 @@ class Chat:
                 length =0
                 pass_batch_count =0
             text_remain = text[i * max_split_batch :]
-            
+
             if len(text_remain) > max_split_batch:
                 text_remain = text_remain[:max_split_batch]
             if split_text:
@@ -442,9 +505,33 @@ class Chat:
                 params.txt_smp,
                 params.spk_emb,
             ),
-            return_tensors='pt', 
+            return_tensors='pt',
             add_special_tokens=False, padding=True
         ).input_ids
+        spk_cond_codes = None
+        if params.spk_smp is not None:
+            spk_cond_codes = self.speaker.decode_prompt(params.spk_smp)
+            if spk_cond_codes.ndim != 2:
+                raise ValueError(
+                    "spk_smp must decode to [num_vq, frames], got %s"
+                    % (tuple(spk_cond_codes.shape),)
+                )
+            if spk_cond_codes.size(0) != self.config.gpt.num_vq:
+                raise ValueError(
+                    "spk_smp num_vq=%d does not match model num_vq=%d"
+                    % (spk_cond_codes.size(0), self.config.gpt.num_vq)
+                )
+            # Placeholder slots prefill refills with the emb_code of each prompt frame.
+            input_ids = torch.nn.functional.pad(
+                input_ids, (0, spk_cond_codes.size(-1)), value=0
+            )
+        input_len = input_ids.size(-1)
+        if input_len >= gpt.SEQLEN:
+            kind = "reference prompt plus text" if spk_cond_codes is not None else "text"
+            raise ValueError(
+                "%s needs %d/%d GPT slots; use a shorter reference or shorter text"
+                % (kind, input_len, gpt.SEQLEN)
+            )
         start_idx = input_ids.shape[-2]
         num_code = self.config.gpt.num_audio_tokens - 1
 
@@ -459,11 +546,12 @@ class Chat:
             temperature=torch.tensor(temperature, device=device),
             eos_token=num_code,
             # attention_mask=attention_mask,
-            max_new_token=params.max_new_token,
+            max_new_token=min(params.max_new_token, gpt.SEQLEN - input_ids.size(-1)),
             min_new_token=params.min_new_token,
             logits_processors=(*logits_processors, *logits_warpers),
             infer_text=False,
             spk_emb=params.spk_emb,
+            spk_cond_codes=spk_cond_codes,
             return_hidden=return_hidden,
             stream=stream,
             show_tqdm=params.show_tqdm,
@@ -488,7 +576,7 @@ class Chat:
         gpt = self.gpt
         input_ids = self.tokenizer(
             self.speaker.decorate_text_prompts(text, params.prompt),
-            return_tensors='pt', 
+            return_tensors='pt',
             add_special_tokens=False, padding=True).input_ids
 
         logits_warpers, logits_processors = gen_logits(

@@ -3,7 +3,7 @@
 # 防止 TPU kernel panic
 set -e
 
-ONNX_DIR="./tmp/onnx"
+ONNX_DIR="../models/onnx"
 TMP_DIR="./tmp/whisper_recompile"
 OUT_DIR="../models/BM1684X"
 

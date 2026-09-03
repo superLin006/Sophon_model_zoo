@@ -11,7 +11,9 @@ import sys
 import numpy as np
 import soundfile as sf
 
-ROOT = "/home/xh/itc_project/Sophon_model_zoo/moonshine"
+ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+)
 FRAME_LEN, N_SAMPLES, EPS = 80, 160000, 1e-6
 LOG_K = float(np.load(os.path.join(ROOT, "models", "log_k.npy")))
 

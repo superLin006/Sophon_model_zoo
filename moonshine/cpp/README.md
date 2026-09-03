@@ -30,7 +30,7 @@ cpp/
 示例:
 
 ```bash
-cd /root/moonshine
+cd /data/moonshine
 ./moonshine_bm1684 models/ test_data/0.wav F32
 ./moonshine_bm1684 models/ test_data/0.wav F16
 ```
@@ -53,7 +53,7 @@ cd /root/moonshine
 
 ## 测试结果
 
-板卡: 172.16.25.248(BM1684X, libsophon 0.5.1),部署目录 /root/moonshine/
+板卡: BM1684X（libsophon 0.5.1），部署目录由 `BOARD_DIR` 环境变量指定
 
 ### 转写文本(与 test_onnx.py / HF 填充版参考 100% 一致)
 

@@ -84,7 +84,7 @@ class GPT(nn.Module):
         self.num_vq = int(gpt_config["num_vq"])
         self.num_audio_tokens = int(gpt_config["num_audio_tokens"])
         self.num_text_tokens = int(gpt_config["num_text_tokens"])
-        
+
         # initialize net name
         self.name_embed_text = "embedding_text"
         self.name_embed_cache_text = "embedding_text_cache"
@@ -99,7 +99,7 @@ class GPT(nn.Module):
 
         self.past_k = {}
         self.past_v = {}
-        # not io_alone 
+        # not io_alone
         if self.io_alone == 0 or self.is_dynamic:
             print("no io_alone")
             for j in range(self.NUM_LAYERS):
@@ -132,40 +132,40 @@ class GPT(nn.Module):
 
         self.next_embed_input_code = self.model.create_max_input_tensors(self.name_embed_cache_code)
         self.next_hidden_state_code = self.model.create_max_output_tensors(self.name_embed_cache_code)
-        
+
         self.first_pid = {}
         self.next_pid = {}
         self.first_attention_mask = {}
         self.next_attention_mask = {}
-        
+
         self.lm_text_input = self.model.create_max_input_tensors(self.name_lm_text)
         self.lm_text_output = self.model.create_max_output_tensors(self.name_lm_text)
-        
+
         self.lm_code_input = self.model.create_max_input_tensors(self.name_lm_code)
         self.lm_code_output = self.model.create_max_output_tensors(self.name_lm_code)
-        
+
         for i in range(self.dev_ids_num):
             self.first_pid[i] = self.init_tensor(self.dev_ids[i], self.tensors[self.name_blocks[0]]["input"][1])
             self.first_attention_mask[i] = self.init_tensor(self.dev_ids[i], self.tensors[self.name_blocks[0]]["input"][2])
             self.next_pid[i] = self.init_tensor(self.dev_ids[i], self.tensors[self.name_blocks_cache[0]]["input"][1])
             self.next_attention_mask[i] = self.init_tensor(self.dev_ids[i], self.tensors[self.name_blocks_cache[0]]["input"][2])
-        
+
     def init_input_tensor(self, dev_id, net, index):
         shape = self.model.get_input_shape(net, index)
         type = self.model.get_input_dtype(net, index)
-        return sail.Tensor(self.handles[dev_id], shape, type, False, True) 
-    
+        return sail.Tensor(self.handles[dev_id], shape, type, False, True)
+
     def init_output_tensor(self, dev_id, net, index):
         shape = self.model.get_output_shape(net, index)
         type = self.model.get_output_dtype(net, index)
         return sail.Tensor(self.handles[dev_id], shape, type, False, True)
-    
+
     def init_tensor(self, dev_id, shape, type):
-        return sail.Tensor(self.handles[dev_id], shape, type, False, True) 
-    
+        return sail.Tensor(self.handles[dev_id], shape, type, False, True)
+
     def init_tensor(self, dev_id, tensor):
-        return sail.Tensor(self.handles[dev_id], tensor.shape(), tensor.dtype(), False, True) 
-    
+        return sail.Tensor(self.handles[dev_id], tensor.shape(), tensor.dtype(), False, True)
+
     def type_convert(self, sail_dtype):
         if sail_dtype == sail.Dtype.BM_FLOAT32:
             return np.float32
@@ -173,9 +173,9 @@ class GPT(nn.Module):
             return np.float16
         if sail_dtype == sail.Dtype.BM_INT32:
             return np.int32
-        if sail_dtype == sail.Dtype.BM_BFLOAT16: 
+        if sail_dtype == sail.Dtype.BM_BFLOAT16:
             return np.uint16
-    
+
     def get_first_input(self, length, token, infer_text: bool):
         name_embed = self.name_embed_text
         token_length = self.text_token_length if infer_text else self.code_token_length
@@ -244,7 +244,7 @@ class GPT(nn.Module):
             attentions=attentions,
             hiddens=hiddens,
         )
-        
+
     def prepare(self, compile=False):
         if self.use_flash_attn and is_flash_attn_2_available():
             self.gpt = self.gpt.to(dtype=torch.float16)
@@ -263,10 +263,10 @@ class GPT(nn.Module):
         """
         return super().__call__(input_ids, text_mask)
     def generate_text(
-        self, 
+        self,
         inputs_ids,
-        temperature, 
-        eos_token, 
+        temperature,
+        eos_token,
     ):
         inputs_ids_list = inputs_ids[0].tolist()
         if isinstance(eos_token, torch.Tensor):
@@ -283,10 +283,10 @@ class GPT(nn.Module):
         while(token != eos_token and self.text_token_length < self.SEQLEN):
             result_tokens.append(token)
             token = self.forward_next_text()
-            
+
         result_tokens = torch.tensor(result_tokens, dtype=torch.int64).unsqueeze(0).unsqueeze(0)
         return result_tokens
-    
+
     def forward_first_text(self, tokens):
         self.text_token_length = len(tokens)
 
@@ -301,7 +301,7 @@ class GPT(nn.Module):
             self.tensors[self.name_embed_text]["input"][i].update_data(input_ids.reshape(self.tensors[self.name_embed_text]["input"][i].shape()))
         self.model.process(self.name_embed_text, self.tensors[self.name_embed_text]["input"], self.tensors[self.name_embed_text]["output"])
 
- 
+
         # blocks
         for i in range(self.dev_ids_num):
             self.tensors[self.name_blocks[0]]["input"][3 * i + 1] = sail.Tensor(self.first_pid[i], [1, length], 0)
@@ -325,7 +325,7 @@ class GPT(nn.Module):
         # lm_head
         self.tensors[self.name_lm_text]["input"][0] = sail.Tensor(self.first_hidden_state_text[0], [1, 1, self.HIDDEN_SIZE], (self.text_token_length - 1) * self.HIDDEN_SIZE)
         self.tensors[self.name_lm_text]["output"][0] = self.lm_text_output[0]
-        
+
         self.model.process(self.name_lm_text, self.tensors[self.name_lm_text]["input"], self.tensors[self.name_lm_text]["output"])
 
         # sample
@@ -351,7 +351,7 @@ class GPT(nn.Module):
         else:
             self.tensors[self.name_embed_cache_text]["input"][0] = self.tensors[self.greedy_text]["output"][0]
         for i in range(self.dev_ids_num):
-            self.tensors[self.name_embed_cache_text]["output"][i] = self.next_hidden_state_text[i] 
+            self.tensors[self.name_embed_cache_text]["output"][i] = self.next_hidden_state_text[i]
 
         self.model.process(self.name_embed_cache_text, self.tensors[self.name_embed_cache_text]["input"], self.tensors[self.name_embed_cache_text]["output"])
 
@@ -379,7 +379,7 @@ class GPT(nn.Module):
             # breakpoint()
             self.model.process(self.name_blocks_cache[i], self.tensors[self.name_blocks_cache[i]]["input"], self.tensors[self.name_blocks_cache[i]]["output"])
 
-        
+
         #lm_head
         self.tensors[self.name_lm_text]["input"][0] = self.next_hidden_state_text[0]
         # breakpoint()
@@ -398,11 +398,64 @@ class GPT(nn.Module):
             spk_idx = -1
             spk_emb = list(range(768))
             self.logger.info("Not set speaker")
+        elif spk_emb is None:
+            # A malformed/custom prompt may contain [spk_emb] without a vector.
+            # Treat it as the empty-speaker path instead of dereferencing None.
+            spk_idx = -1
+            spk_emb = list(range(768))
+            self.logger.warning("[spk_emb] token present but no speaker embedding was supplied")
         else:
             spk_idx = temp[0].item()
             spk_emb = spk_emb.tolist()
         return spk_idx, spk_emb
-    
+
+    def inject_prompt_codes(self, dst, codes, total_len):
+        """Overwrite the trailing len(codes) hidden slots of `dst` with the
+        emb_code embedding of a reference-audio code prompt.
+
+        dst: device tensors holding prefill hidden states [1, SEQLEN, HIDDEN_SIZE]
+        codes: [num_vq, T] DVAE audio codes of the reference audio
+        total_len: text tokens + T, i.e. how many prefill slots are real
+        """
+        if codes.ndim != 2 or codes.size(0) != self.num_vq:
+            raise ValueError(
+                "prompt codes must have shape [%d, frames], got %s"
+                % (self.num_vq, tuple(codes.shape))
+            )
+        n = codes.size(1)
+        if n <= 0 or n >= total_len or total_len > self.SEQLEN:
+            raise ValueError(
+                "invalid prompt placement: frames=%d total_len=%d seqlen=%d"
+                % (n, total_len, self.SEQLEN)
+            )
+        codes = codes.to(dtype=torch.int32, device="cpu").contiguous()
+        dtype = dst[0].dtype()
+        ids_name = self.name_embed_cache_code
+        ids_dtype = self.type_convert(self.tensors[ids_name]["input"][0].dtype())
+        ids_shape = self.tensors[ids_name]["input"][0].shape()
+
+        # Raw f16/bf16 bits, so no dtype assumption on what asnumpy() returns.
+        prompt_emb = np.empty(n * self.HIDDEN_SIZE, dtype=np.uint16)
+        frame = sail.Tensor(self.handle, [self.HIDDEN_SIZE], dtype, True, False)
+
+        for t in range(n):
+            self.next_embed_input_code[0].update_data(
+                np.array(codes[:, t].tolist(), dtype=ids_dtype).reshape(ids_shape))
+            self.tensors[ids_name]["input"][0] = self.next_embed_input_code[0]
+            self.tensors[ids_name]["output"][0] = self.next_hidden_state_code[0]
+            self.model.process(ids_name, self.tensors[ids_name]["input"],
+                               self.tensors[ids_name]["output"])
+            frame.sync_d2s(self.next_hidden_state_code[0], 0, 0, self.HIDDEN_SIZE)
+            sl = slice(t * self.HIDDEN_SIZE, (t + 1) * self.HIDDEN_SIZE)
+            prompt_emb[sl] = frame.asnumpy().view(np.uint16)
+
+        host = sail.Tensor(self.handle, [n * self.HIDDEN_SIZE], dtype, True, False)
+        host.update_data(prompt_emb)
+        offset = (total_len - n) * self.HIDDEN_SIZE
+        for i in range(self.dev_ids_num):
+            dst[i].sync_s2d(host, 0, offset, n * self.HIDDEN_SIZE)
+        self.logger.info("prompt codes injected: %d frames at pos %d", n, total_len - n)
+
     @torch.no_grad()
     def generate(
         self,
@@ -417,6 +470,7 @@ class GPT(nn.Module):
         ] = (),
         infer_text=False,
         spk_emb=None,
+        spk_cond_codes=None,
         return_attn=False,
         return_hidden=False,
         stream=False,
@@ -450,17 +504,21 @@ class GPT(nn.Module):
             pbar = tqdm(total=max_new_token, desc="code", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt}(max) [{elapsed}, {rate_fmt}{postfix}]") if show_tqdm else None
 
             for i in range(max_new_token):
-                if i == 0:        
-                    logits, hidden = self.forward_first_code_core(inputs_ids[0].tolist(), *self.get_speaker(inputs_ids, spk_emb))
+                if i == 0:
+                    logits, hidden = self.forward_first_code_core(
+                        inputs_ids[0].tolist(),
+                        *self.get_speaker(inputs_ids, spk_emb),
+                        spk_cond_codes,
+                    )
                     inputs_ids = inputs_ids.unsqueeze(2).expand(-1, -1, self.num_vq)
                 else:
                     if self.code_token_length == self.SEQLEN:
                         break
                     logits, hidden = self.forward_next_code_core(curr_input_id)
-                
+
                 hiddens.append(torch.tensor(hidden, dtype=torch.float32).unsqueeze(0))
                 logits = torch.tensor(logits).reshape(self.num_audio_tokens, self.num_vq).transpose(0, 1)
-                
+
                 # 应用logits处理器
                 inputs_ids_sliced = inputs_ids.narrow(
                     1,
@@ -475,17 +533,17 @@ class GPT(nn.Module):
 
                 for processor in logits_processors:
                     logits = processor(logits_token, logits)
-                
+
                 if i < min_new_token:
                     logits[:, eos_token] = -float('inf')
-                
+
                 scores = F.softmax(logits / temperature, dim=-1)
                 idx_next = torch.multinomial(scores, num_samples=1)
                 idx_next = idx_next.view(-1, self.num_vq)
                 finish |= (idx_next == eos_token).any(1)
                 inputs_ids = torch.cat([inputs_ids, idx_next.unsqueeze(1)], 1)
                 curr_input_id = inputs_ids[0, -1].int().tolist()
-                
+
                 not_finished = ~finish
                 end_idx += not_finished.int()
                 stream_iter += not_finished.any().int()
@@ -523,8 +581,8 @@ class GPT(nn.Module):
                 hiddens,
                 infer_text,
             )
-            
-    def forward_first_code_core(self, tokens, spk_idx, spk_emb):
+
+    def forward_first_code_core(self, tokens, spk_idx, spk_emb, spk_cond_codes=None):
         self.code_token_length = len(tokens)
 
         length = self.text_token_length + 1 if self.is_dynamic else self.SEQLEN
@@ -542,7 +600,10 @@ class GPT(nn.Module):
                 spk_emb_tensor = sail.Tensor(self.handle, [self.HIDDEN_SIZE], self.first_hidden_state_text[i].dtype(), True, False)
                 spk_emb_tensor.update_data(np.array(spk_emb).astype(np.float16).view(np.uint16))
                 self.first_hidden_state_text[i].sync_s2d(spk_emb_tensor, 0, spk_idx * self.HIDDEN_SIZE, self.HIDDEN_SIZE)
- 
+
+        if spk_cond_codes is not None:
+            self.inject_prompt_codes(self.first_hidden_state_text, spk_cond_codes, self.code_token_length)
+
         # blocks
         for i in range(self.dev_ids_num):
             self.tensors[self.name_blocks[0]]["input"][3 * i + 1] = sail.Tensor(self.first_pid[i], [1, length], 0)
@@ -566,7 +627,7 @@ class GPT(nn.Module):
         # lm_head
         self.tensors[self.name_lm_code]["input"][0] = sail.Tensor(self.first_hidden_state_text[0], [1, 1, self.HIDDEN_SIZE], (self.code_token_length - 1) * self.HIDDEN_SIZE)
         self.tensors[self.name_lm_code]["output"][0] = self.lm_code_output[0]
-        
+
         self.model.process(self.name_lm_code, self.tensors[self.name_lm_code]["input"], self.tensors[self.name_lm_code]["output"])
 
         last_hidden_tensor = sail.Tensor(self.handle, [self.HIDDEN_SIZE], self.first_hidden_state_text[0].dtype(), True, False)
@@ -574,7 +635,7 @@ class GPT(nn.Module):
         last_hidden = last_hidden_tensor.asnumpy().view(np.float16)
         logits = self.lm_code_output[0].asnumpy()
         return logits, last_hidden
-    
+
     def forward_next_code_core(self, tokens):
         self.code_token_length += 1
         position_id = np.array(self.code_token_length - 1, self.type_convert(self.tensors[self.name_blocks_cache[0]]["input"][1].dtype()))
@@ -588,7 +649,7 @@ class GPT(nn.Module):
             self.next_embed_input_code[i].update_data(input_ids.reshape(self.tensors[self.name_embed_cache_code]["input"][i].shape()))
             self.tensors[self.name_embed_cache_code]["input"][i] = self.next_embed_input_code[i]
         for i in range(self.dev_ids_num):
-            self.tensors[self.name_embed_cache_code]["output"][i] = self.next_hidden_state_code[i] 
+            self.tensors[self.name_embed_cache_code]["output"][i] = self.next_hidden_state_code[i]
 
         self.model.process(self.name_embed_cache_code, self.tensors[self.name_embed_cache_code]["input"], self.tensors[self.name_embed_cache_code]["output"])
 
@@ -615,7 +676,7 @@ class GPT(nn.Module):
             # breakpoint()
             self.model.process(self.name_blocks_cache[i], self.tensors[self.name_blocks_cache[i]]["input"], self.tensors[self.name_blocks_cache[i]]["output"])
 
-        
+
         #lm_head
         self.tensors[self.name_lm_code]["input"][0] = self.next_hidden_state_code[0]
         # breakpoint()

@@ -2,16 +2,14 @@
 
 [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) 的 Qwen3-asr-0.6B（30 语种 + 22 中文方言的语音识别 + 语种识别）完整移植到 Sophon BM1684X，中英文转写与原生基线一致。
 
-## 🏆 当前推荐：HF 标准权重 + llm_convert 单 bmodel 方案
+## 当前采用方案：HF 标准权重 + llm_convert 单 bmodel
 
 **结论：HF transformers 5.14 的 Qwen3ASR 权重（language_model 重命名为标准 Qwen3）直接走
 LLM-TPU 官方 `llm_convert.py` 标准 Qwen3 转换**，比官方 `--qwen_asr` 方案（qwen_asr 包版权重，
 thinker_config + mrope，架构不通用）更通用：**权重即 HF 原版，工具链即官方**。
 
-**两个关键点（踩坑总结）**：
-1. **必须 `--quantize w4bf16 -g 64`**（group 64）：默认 group 128 的 w4bf16 量化误差经 28 层
-   指数放大（单层 ~0.05 → layer1 差 2.0 → logits 翻转，首 token "language" 变垃圾），
-   group 64 误差减半后精度恢复；w8bf16 也可（体积 +210MB）
+**两个关键点（实测结论）**：
+1. **默认交付使用 `w4f16 -g 64`**：646MB 单文件，13 条已覆盖多语种音频全部通过；`w8bf16` 是精度基线与回退档。`w4bf16 -g 64` 保留作 4bit 对照，默认 group 128 的量化误差会经 28 层放大，不能仅凭转换成功判断可用性
 2. **KV bf16 是 llm_convert 标准行为**（block_cache 的 history_k/v 即 bf16），无需 hack
 
 **encoder 用全量 3000 帧架构**（一个网络通吃离线+流式，对齐官方 Python/transformers 语义）：
@@ -19,39 +17,27 @@ mel pad 到 3000 帧一次过 encoder（跨块窗口上下文完整，20s 长音
 audio tokens。流式每块全量重编码（固定 0.08s，1s 块下实时）。**chunk 独立编码（官方 bmodel 方案）
 长音频会漏段，不采用。**
 
-```bash
-# 编译（docker sophon-tpumlir，TPU-MLIR v1.28.1；容器内需 torch 2.4.1 + transformers 4.57.6）
-# LLM（W4BF16，既有主档）：标准 Qwen3 w4bf16 group64（-g 64 必加），KV bf16，seq512
-llm_convert.py -m models_llm_std -s 512 --quantize w4bf16 -g 64 -c bm1684x \
-    --out_dir qwen3_asr_std_w4g64_512
-# LLM（W4F16，独立实验档）：config.json 的 dtype 必须为 float16，权重可沿用标准目录
-llm_convert.py -m models_llm_std_f16 -s 512 --quantize w4f16 -g 64 -c bm1684x \
-    --out_dir qwen3_asr_std_w4f16_512
-# 全量 encoder（110MB）：3000 帧输入 + W4BF16 + 必加 --disable_layer_group
-cd compile && python export_encoder_onnx.py --model_path ../models --num_mel_frames 3000 \
-    --out_dir ./tmp/onnx_enc3000
-model_transform.py --model_name qwen3_asr_encoder --model_def tmp/onnx_enc3000/*.onnx \
-    --input_shapes [[1,128,3000]] --mlir tmp/encoder_full.mlir
-model_deploy.py --mlir tmp/encoder_full.mlir --quantize W4BF16 --chip bm1684x \
-    --disable_layer_group --model tmp/encoder_full.bmodel
-# 合并单文件（646MB，encoder + LLM 一个 bmodel）
-model_tool --combine tmp/encoder_full.bmodel qwen3_asr_std_w4g64_512/*.bmodel \
-    -o models/BM1684X/qwen3_asr_merged_w4g64.bmodel
-```
+> 完整编译命令（含 W4F16 默认档、W4BF16 对照档、全量 encoder、合并单文件）见下文「**编译 bmodel**」一节，本节不重复，避免两份命令漂移。
 
-### W4F16 试验结果（2026-08-18）
+### 档位与验收（2026-08-18 受控测试）
 
-在全量 3000 帧 encoder + seq512 LLM 方案上，新增 W4F16 实验档位：
+在全量 3000 帧 encoder + seq512 LLM 方案上：
 
-| 版本 | 合并 bmodel 大小 | 有效测试 | 加权/中位数 RTF | 状态 |
+| 档位 | 合并 bmodel 大小 | 有效测试 | RTF（受控多轮中位数） | 定位 |
 |---|---:|---:|---:|---|
-| W8BF16 | 987,545,600 B（约 942MB） | 13/13 | 0.161（中位数） | 精度基线 |
-| W4BF16 g64 | 676,376,576 B（约 646MB） | 已有验证 | — | 既有 4bit 档 |
-| **W4F16 g64** | **676,376,576 B（约 646MB）** | **13/13** | **0.128（中位数）** | 已上板，继续质量复核 |
+| **W4F16 g64** | **676,376,576 B（约 646MB）** | **13/13** | **0.128** | **默认部署档**（体积 -32%、RTF 最优） |
+| W8BF16 | 987,545,600 B（约 942MB） | 13/13 | 0.161 | 精度基线 / 回退档 |
+| W4BF16 g64 | 676,376,576 B（约 646MB） | 13/13（逐条结果见下文） | **未做受控多轮测量** | 既有 4bit 档，编译对照档 |
+
+三档的 decode 速度一致（64–65 tok/s，与生成长度和 KV 长度无关）。
+
+> **关于 W4BF16 的 RTF**：`PERF_SUMMARY.md` 早期版本给它标过「0.10（实测）」，但该数字在模型文档、`test_outputs/` 原始日志里都查无出处，已删除。W4BF16 只有 2026-08-10 的 13 条逐条单次结果（端到端 0.27–2.28s，RTF 0.040–0.54，短音频偏高），**没有做过受控多轮**，因此不与另两档的中位数并列比较。需要该档 RTF 时应按 `test_outputs/bench_20260817/` 的方式补测。
+
+**定档结论**：默认部署 **W4F16 g64**，W8BF16 保留为精度基线与回退档。13 条有效多语种音频（中/英/日/德/法/西）上两档转写均全部成功，未观察到差异；但 **13 条不足以覆盖标称的 30 语种 + 22 中文方言**，因此在扩展到完整语种集之前，不宣布 W4F16 全面替代 W8BF16——遇到未覆盖语种的质量问题时回退 W8BF16。
 
 W4F16 的 60 个网络已合并为 `models/BM1684X/qwen3_asr_merged_w4f16.bmodel`。首次测试发现 C++ 运行时原先把 LLM hidden/embedding 按 BF16 写入，而 W4F16 网络要求 F16；现已改为按 bmodel 的 input/output dtype 动态转换。修复后离线和流式均能正常转写，W8BF16 使用同一新版二进制回归正常。
 
-受控测试中，W4F16 13 条有效多语种音频全部成功；60 秒音频失败属于当前 encoder 的 30 秒硬上限。W4F16 RTF 存在板卡运行抖动，表中使用正式多轮的中位数，不将单次最低值当作最终性能结论。质量仍需更大数据集和人工复核后，才能决定是否替换 W8BF16。
+受控测试中 60 秒音频失败属预期——超出当前 encoder 的 30 秒硬上限，不计入回归。W4F16 RTF 存在板卡运行抖动，表中用正式多轮的中位数，不将单次最低值当作最终性能结论。原始日志见 `test_outputs/bench_20260817/`（W8BF16 与 W4F16 各 4 轮，已入库）。
 
 W4F16 的上板运行方式与 W4BF16 相同，仅替换 bmodel：
 
@@ -62,12 +48,11 @@ W4F16 的上板运行方式与 W4BF16 相同，仅替换 bmodel：
     --model_dir . --stream --audio test_data/test_zh.wav
 ```
 
-官方 `--qwen_asr` 方案（qwen_asr 包版权重 + chunk encoder）曾做对照——其长音频会漏段且 20s 直接崩溃，
-> 已弃用（本方案与官方 Python/transformers 行为一致，转写更完整）。
+官方 `--qwen_asr` 方案（qwen_asr 包版权重 + chunk encoder）曾做对照：其长音频会漏段且 20s 直接崩溃，**已弃用**。本方案与官方 Python/transformers 行为一致，转写更完整。
 
 
 
-## 模型结构（探索结论）
+## 模型结构
 
 `Qwen3ASRForConditionalGeneration`（单文件 model.safetensors，0.8B 参数 BF16）：
 
@@ -94,24 +79,34 @@ W4F16 的上板运行方式与 W4BF16 相同，仅替换 bmodel：
 ```
 Qwen3-ASR/
 ├── compile/                     # encoder 导出 + bmodel 编译
+│   ├── make_models_llm_std.py   # HF 权重 → 标准 Qwen3 布局（生成 models_llm_std/）
 │   ├── export_encoder_onnx.py   # encoder+projector 导出（--num_mel_frames 3000 全量）
-│   └── recompile_encoder.sh     # encoder bmodel 编译（W4BF16 + --disable_layer_group）
+│   ├── recompile_encoder.sh     # encoder bmodel 编译（W4BF16 + --disable_layer_group）
+│   ├── recompile_encoder_3000.sh
+│   ├── merge.sh                 # encoder + LLM 合并为单文件（固化 model_tool --combine）
+│   └── tmp/                     # 编译中间物（不入库）
 ├── python/
 │   └── infer_native.py          # 原生基线（输出格式参照）
 ├── cpp/                         # 纯 bmrt C++ 推理（交叉编译）
 │   └── src/  (main / asr_engine / qwen_mel / tokenizer)
-├── models/                      # 权重（不入库）+ 编译好的 bmodel
-│   ├── BM1684X/qwen3_asr_merged_w4g64.bmodel   # 646M（全量 encoder + LLM 合并单文件）
-│   └── prefix_ids.txt / suffix_ids.txt / mel_filters.npz / tokenizer.json
-├── models_llm_std/              # llm_convert 编译权重（重命名版，不入库，.gitignore）
-├── test_data/                   # 测试音频（16k mono，13 个）
+├── models/
+│   ├── qwen3-asr-0.6b/          # HF 原始权重（不入库）+ 运行时小资产
+│   │   └── prefix_ids.txt / suffix_ids.txt / mel_filters.npz / tokenizer.json
+│   └── BM1684X/                 # 与 qwen3-asr-0.6b/ **平级**，不是它的子目录
+│       ├── qwen3_asr_merged_w4g64.bmodel   # 646M（W4BF16 g64，对照档）
+│       ├── qwen3_asr_merged_w4f16.bmodel   # 646M（W4F16 g64，默认部署档）
+│       └── qwen3_asr_merged_w8bf16.bmodel  # 942M（精度回退档）
+├── models_llm_std/              # llm_convert 用的标准 Qwen3 权重（重命名版，不入库）
+├── models_llm_std_f16/          # W4F16 档用（config dtype 改 float16，不入库）
+├── test_data/                   # 测试音频（16k mono）：13 个有效 + 2 个超 30s 上限的预期失败样本
+├── test_outputs/                # 板上原始 bench 日志（已入库）
 └── deploy_to_board.sh           # 一键部署 + 测试
 ```
 
 ### 编译权重准备（models_llm_std/）
 
 `models_llm_std/` 是 llm_convert 编译用的**标准 Qwen3 权重**（HF 5.14 的 Qwen3ASR 权重重命名而来，
-不入库，.gitignore 忽略）。**从 HF 原版权重（`models/`）重建**：
+不入库，.gitignore 忽略）。**从 HF 原版权重（`models/qwen3-asr-0.6b/`）重建**：
 ```bash
 cd compile && python make_models_llm_std.py   # 从 ../models 生成 ../models_llm_std
 ```
@@ -120,39 +115,65 @@ cd compile && python make_models_llm_std.py   # 从 ../models 生成 ../models_l
    audio_tower / multi_modal_projector 键丢弃，LLM 编译不需要）
 2. **config.json 的 `model_type` 改 `qwen3`、`architectures` 改 `Qwen3ForCausalLM`**
 
-### 编译 bmodel（一次性，docker sophon-tpumlir，TPU-MLIR v1.28.1）
+### 编译 bmodel（一次性，容器 `sophon-tpumlir-v128`，TPU-MLIR v1.28.1）
+
+容器内需 torch 2.4.1 + transformers 4.57.6（缺 qwen3 识别会 KeyError）。
+
+> ⚠️ **所有命令先 `cd /workspace/Qwen3-ASR`**。`run_docker.sh` 把仓库根挂到 `/workspace` 并以此为 cwd，而下面的路径都是相对本模型目录的；不先 cd 会把产物落到仓库根（`.gitignore` 里的 `Qwen3-ASR/qwen3_asr_std*/` 规则即按此约定）。中间产物统一落 `compile/tmp/`，见 `.claude/standards/models_directory_standard.md` §3.1。
 
 ```bash
-# 容器环境：torch 2.4.1 + transformers 4.57.6（缺 qwen3 识别会 KeyError）
+docker exec -it sophon-tpumlir-v128 bash
+cd /workspace/Qwen3-ASR
 
-# 1. LLM（536MB）：标准 Qwen3 w4bf16 group64（-g 64 必加，group 128 精度不足），KV bf16 自动
+# 0. 生成 llm_convert 用的标准 Qwen3 权重（若 models_llm_std/ 尚不存在）
+cd compile && python make_models_llm_std.py && cd ..
+
+# 1a. LLM 对照档 W4BF16 group64（646MB）：-g 64 必加，group 128 精度不足；KV bf16 自动
 llm_convert.py -m models_llm_std -s 512 --quantize w4bf16 -g 64 -c bm1684x \
-    --out_dir qwen3_asr_std_w4g64_512
+    --out_dir compile/tmp/qwen3_asr_std_w4g64_512
+
+# 1b. LLM 默认部署档 W4F16 group64：config.json 的 dtype 必须为 float16，
+#     权重目录用 make_models_llm_std.py 另行生成的 models_llm_std_f16
+llm_convert.py -m models_llm_std_f16 -s 512 --quantize w4f16 -g 64 -c bm1684x \
+    --out_dir compile/tmp/qwen3_asr_std_w4f16_512
 
 # 2. 全量 encoder（110MB）：3000 帧输入 + W4BF16 + 必加 --disable_layer_group（离线/流式通吃）
-cd compile && python export_encoder_onnx.py --model_path ../models --num_mel_frames 3000 \
+cd compile
+python export_encoder_onnx.py --model_path ../models --num_mel_frames 3000 \
     --out_dir ./tmp/onnx_enc3000
-model_transform.py --model_name qwen3_asr_encoder --model_def tmp/onnx_enc3000/qwen3_asr_encoder.onnx \
+model_transform.py --model_name qwen3_asr_encoder \
+    --model_def tmp/onnx_enc3000/qwen3_asr_encoder.onnx \
     --input_shapes [[1,128,3000]] --mlir tmp/encoder_full.mlir
 model_deploy.py --mlir tmp/encoder_full.mlir --quantize W4BF16 --chip bm1684x \
     --disable_layer_group --model tmp/encoder_full.bmodel
+cd ..
 
-# 3. 合并单文件（646MB）
-model_tool --combine tmp/encoder_full.bmodel qwen3_asr_std_w4g64_512/*.bmodel \
-    -o models/BM1684X/qwen3_asr_merged_w4g64.bmodel
+# 3. 合并单文件（646MB）：用已固化的 merge.sh，不要手敲 model_tool --combine
+#    merge.sh 自带绝对路径默认输出、必填参数校验与产物存在性检查
+bash compile/merge.sh \
+    compile/tmp/encoder_full.bmodel \
+    compile/tmp/qwen3_asr_std_w4g64_512 \
+    qwen3_asr_merged_w4g64.bmodel
+# W4F16 档同理，只换 LLM 目录与输出名：
+bash compile/merge.sh \
+    compile/tmp/encoder_full.bmodel \
+    compile/tmp/qwen3_asr_std_w4f16_512 \
+    qwen3_asr_merged_w4f16.bmodel
 ```
+
+产物落在 `models/BM1684X/`（`merge.sh` 的默认输出路径）。encoder 的 `model_transform.py` / `model_deploy.py` 会把 npz/mlir/prototxt 等中间物写进**当前工作目录**，所以第 2 步必须在 `compile/` 下执行（其 `.gitignore` 已覆盖 `compile/*.npz` 等），不要在仓库根或 `models/` 下运行。
 
 ### 上板运行
 
 ```bash
 bash cpp/build.sh                # sophon-cross-build 容器内交叉编译
-bash deploy_to_board.sh          # 一键部署 + 测试
+BOARD_IP=<board_ip> bash deploy_to_board.sh --test
 # 板上（单文件 bmodel）：
-./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4g64.bmodel \
+./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4f16.bmodel \
     --model_dir . --audio test_data/test_zh.wav
 ```
 
-## 上板测试结果（BM1684X SoC，172.16.25.248）
+## 上板测试结果（BM1684X SoC）
 
 ### 测试结果（test_data 全部 13 个音频，C++ bmrt 上板实测，2026-08-10，seq512）
 
@@ -202,9 +223,12 @@ bash deploy_to_board.sh          # 一键部署 + 测试
    但 **不要直接操作 `stages[0].input_mems`**（真实数据下会卡死板卡，Eureka 同款教训）
 9. **decode mask**：mask 长度 SEQ+1，0..pos-1 可见、pos..SEQ-1 屏蔽无效槽位、
    **SEQ 位（本次新 key）保持 0 可见**；position_id = token_length（修正 Eureka 的 off-by-one）
-10. **bmrt_launch_tensor_ex 是异步的**：最后两个参数是 user_mem/user_stmode（不是 is_sync！），
-    **每层 launch 后必须 bm_thread_sync**，否则读到 TPU 输出缓冲初始 0x7fff（bf16 NaN）或残留 → 输出垃圾；
-    层间 d2d（异步 DMA）后、再 launch 前也要 sync
+10. **`bmrt_launch_tensor_ex` 是异步的**：最后两个参数是 `user_mem` / `user_stmode`（**不是 `is_sync`**）。sync 策略分层，详见知识库 §3.1：
+    - **CPU 读结果前必须 `bm_thread_sync`**（无争议）
+    - **层间是否 sync 取决于产物类型**：本模型走 `llm_convert` 标准产物（层融合、KV 独立），同线程 launch/d2d 进入驱动 FIFO 队列自然串行，**层间无需逐个 sync**（HY-MT 61/61 与官方 llm_tpu demo 一致）；`model_transform`/`model_deploy` 通用产物 + 手写 d2d 链则保守逐层 sync
+    - 跨线程、或有 host 参与判断（s2d 覆盖等）时每步都要 sync
+    - **排查线索**：读到 `0x7fff`（bf16 NaN）或上一次进程的残留值，说明在该 sync 的地方没 sync
+    - ⚠️ 本条早期版本写作"每层 launch 后必须 bm_thread_sync"，那是 2026-08-08 的结论，**已在知识库 §6 被裁决推翻**；本模型正是 llm_convert 产物，不要再按旧结论加满 sync
 11. **层间 d2d 必须直接写到下一层 in0**（`net_blocks_[i+1]->input_mems[0]`，QwenEngine 同款）；
     写到中转 buffer 不会生效（下一层读自己的 in0 是未初始化残留）→ layer1+ 全错
 12. **各层 pos/mask 输入共享同一块 input_mem**（addr mode 1 下地址相同，已验证），只传一次即可；
@@ -223,7 +247,7 @@ bash deploy_to_board.sh          # 一键部署 + 测试
 流式（无 VAD）：音频持续灌入 + 模型持续吐字修订，`stream_finish` 定稿（音频流结束/静音检测后调用）。
 
 ```bash
-./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4g64.bmodel \
+./qwen3_asr_bm1684x --bmodel models/BM1684X/qwen3_asr_merged_w4f16.bmodel \
     --model_dir . --stream --audio test_data/test_zh.wav
 ```
 

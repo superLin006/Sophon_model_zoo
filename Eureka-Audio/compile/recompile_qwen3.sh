@@ -3,7 +3,7 @@
 # whisper encoder 才需要这个参数，qwen3 加了会触发 SHA 校验失败
 set -e
 
-ONNX_DIR="./tmp/onnx"
+ONNX_DIR="../models/onnx"
 TMP_DIR="./tmp"
 OUT_DIR="../models/BM1684X"
 SEQ=512; HIDDEN=2048; N_LAYERS=28; N_KV_HEADS=8; HEAD_DIM=128; VOCAB=151936

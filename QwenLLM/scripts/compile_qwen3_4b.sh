@@ -19,8 +19,8 @@ echo "[INFO] TPU-MLIR 容器内转换 Qwen3-4B-AWQ, seq_len=2048"
 echo "[INFO] 权重: ${WEIGHTS_DIR}"
 echo "[INFO] 输出: ${OUTPUT_DIR}/qwen3_4b/"
 
-docker start sophon-tpumlir
-docker exec sophon-tpumlir bash -c "
+docker start sophon-tpumlir-v128
+docker exec sophon-tpumlir-v128 bash -c "
     set -e
     echo '[docker] 固定 transformers==4.51.1（与 PyTorch 2.1.0+cpu 兼容）...'
     pip3 install "transformers==4.51.1" -q 2>/dev/null || true
@@ -45,6 +45,5 @@ echo "[INFO] bmodel 文件:"
 ls -lh "${OUTPUT_DIR}/qwen3_4b/"*.bmodel 2>/dev/null || ls -lh "${OUTPUT_DIR}/qwen3_4b/"
 
 echo ""
-echo "[INFO] 下一步：scp bmodel 到板卡并测试"
-echo "  BMODEL=\$(ls ${OUTPUT_DIR}/qwen3_4b/*.bmodel | head -1)"
-echo "  sshpass -p 1 scp \"\${BMODEL}\" root@172.16.40.75:/data/sophon-llm/qwen3/"
+echo "[INFO] 下一步：用统一部署入口上传 bmodel 到板卡（凭据通过环境变量提供）"
+echo "  BOARD_IP=<board_ip> bash QwenLLM/scripts/deploy_to_board.sh --test"

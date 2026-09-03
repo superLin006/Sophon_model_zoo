@@ -8,21 +8,25 @@
 
 set -e
 
-# 安装 tpu_mlir（强制从本地 whl 安装）
-WHL=$(ls /toolkits/tpu_mlir*.whl 2>/dev/null | head -1)
-if [ -z "$WHL" ]; then
-    echo "[Error] tpu_mlir whl not found in /toolkits/"
-    exit 1
+# 使用公共镜像已安装的 TPU-MLIR；仅在工具不存在时从挂载 wheel 补装。
+if ! command -v model_transform.py >/dev/null 2>&1 || ! command -v model_deploy.py >/dev/null 2>&1; then
+    WHL=$(find /toolkits -maxdepth 1 -type f -name 'tpu_mlir*.whl' -print -quit 2>/dev/null)
+    if [ -z "$WHL" ]; then
+        echo "[Error] model_transform.py/model_deploy.py 不存在，且 /toolkits 无 tpu_mlir wheel"
+        exit 1
+    fi
+    python -m pip install "$WHL" -q --no-deps
 fi
-pip install "$WHL" -q --no-deps 2>/dev/null || pip install "$WHL" -q
 
+MODEL_ROOT="/workspace/sensevoice"
 MODEL_NAME="sensevoice_small"
-ONNX_DIR="/workspace/models/onnx"
-BMODEL_DIR="/workspace/models/BM1684X"
+ONNX_DIR="${MODEL_ROOT}/models/onnx"
+BMODEL_DIR="${MODEL_ROOT}/models/BM1684X"
 WORK_DIR="/tmp/sensevoice_compile"
+OUTPUT_DIR="${WORK_DIR}/output"
 
 chip="bm1684x"
-quantize="${1:-F32}"
+quantize="${1:-F16}"   # 默认 F16（与 deploy_to_board.sh 默认一致），可传 F32
 
 if [ "${quantize}" != "F32" ] && [ "${quantize}" != "F16" ]; then
     echo "[Error] 只支持 F32 或 F16，收到: ${quantize}"
@@ -30,6 +34,8 @@ if [ "${quantize}" != "F32" ] && [ "${quantize}" != "F16" ]; then
 fi
 
 mkdir -p "${BMODEL_DIR}" "${WORK_DIR}"
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}"
 
 echo "================================================================"
 echo "  SenseVoice Small BM1684X bmodel 转换"
@@ -49,7 +55,10 @@ model_deploy.py \
     --mlir "${MODEL_NAME}.mlir" \
     --quantize ${quantize} \
     --chip ${chip} \
-    --model "${BMODEL_DIR}/${MODEL_NAME}_${quantize}.bmodel"
+    --model "${OUTPUT_DIR}/${MODEL_NAME}_${quantize}.bmodel"
+
+mv "${OUTPUT_DIR}/${MODEL_NAME}_${quantize}.bmodel" \
+   "${BMODEL_DIR}/${MODEL_NAME}_${quantize}.bmodel"
 
 echo ""
 echo "================================================================"

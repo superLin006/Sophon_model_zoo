@@ -1,0 +1,45 @@
+===== short repeat=1/3 =====
+open usercpu.so, init user_cpu_init 
+Translation: 这是免费的。
+Input tokens: 21, output tokens: 3
+Prefill: 203.358 ms, decode: 34.9031 token/s
+===== short repeat=2/3 =====
+open usercpu.so, init user_cpu_init 
+Translation: 这是免费的。
+Input tokens: 21, output tokens: 3
+Prefill: 202.411 ms, decode: 34.901 token/s
+===== short repeat=3/3 =====
+open usercpu.so, init user_cpu_init 
+Translation: 这是免费的。
+Input tokens: 21, output tokens: 3
+Prefill: 203.162 ms, decode: 34.84 token/s
+===== medium repeat=1/3 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在自回归解码过程中，模型会重复使用由之前的数据点生成的键值缓存。这样就能避免重新计算整个注意力历史记录，不过当上下文规模较大时，内存带宽仍然可能成为瓶颈问题。
+Input tokens: 55, output tokens: 42
+Prefill: 202.915 ms, decode: 34.6758 token/s
+===== medium repeat=2/3 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在自回归解码过程中，模型会重复使用由之前的数据点生成的键值缓存。这样就能避免重新计算整个注意力历史记录，不过当上下文规模较大时，内存带宽仍然可能成为瓶颈问题。
+Input tokens: 55, output tokens: 42
+Prefill: 203.593 ms, decode: 34.1828 token/s
+===== medium repeat=3/3 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在自回归解码过程中，模型会重复使用由之前的数据点生成的键值缓存。这样就能避免重新计算整个注意力历史记录，不过当上下文规模较大时，内存带宽仍然可能成为瓶颈问题。
+Input tokens: 55, output tokens: 42
+Prefill: 203.986 ms, decode: 33.223 token/s
+===== long repeat=1/3 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在部署该服务之前，工程团队必须完成三项检查。首先，需要将转换后的模型与确定性参考模型进行比对，以验证其在短、中、长输入条件下的性能。其次，应记录启动后的延迟时间，而不是仅依赖一次冷启动时的测量结果。最后，应保留之前的模型版本，以便在精度或稳定性出现下降时，能够快速回退到之前的模型版本。只有当所有检查都通过且结果被记录下来后，才能继续发布该服务。
+Input tokens: 105, output tokens: 98
+Prefill: 206.405 ms, decode: 33.1869 token/s
+===== long repeat=2/3 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在部署该服务之前，工程团队必须完成三项检查。首先，需要将转换后的模型与确定性参考模型进行比对，以验证其在短、中、长输入条件下的性能。其次，应记录启动后的延迟时间，而不是仅依赖一次冷启动时的测量结果。最后，应保留之前的模型版本，以便在精度或稳定性出现下降时，能够快速回退到之前的模型版本。只有当所有检查都通过且结果被记录下来后，才能继续发布该服务。
+Input tokens: 105, output tokens: 98
+Prefill: 204.381 ms, decode: 33.4786 token/s
+===== long repeat=3/3 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在部署该服务之前，工程团队必须完成三项检查。首先，需要将转换后的模型与确定性参考模型进行比对，以验证其在短、中、长输入条件下的性能。其次，应记录启动后的延迟时间，而不是仅依赖一次冷启动时的测量结果。最后，应保留之前的模型版本，以便在精度或稳定性出现下降时，能够快速回退到之前的模型版本。只有当所有检查都通过且结果被记录下来后，才能继续发布该服务。
+Input tokens: 105, output tokens: 98
+Prefill: 204.588 ms, decode: 34.2526 token/s

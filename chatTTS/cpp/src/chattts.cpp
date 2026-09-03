@@ -45,13 +45,19 @@ struct ChatTTS::Impl {
     std::unique_ptr<ISTFT>          istft;
 
     std::vector<uint16_t> spk_emb;   // float16 [hidden_size=768]
+    std::vector<int> voice_prompt_codes; // row-major [frames, num_vq]
+    int voice_prompt_frames = 0;
+    std::string voice_prompt_text;
     int spk_emb_token_id = -1;       // id of "[spk_emb]" in vocab
+    int empty_spk_token_id = -1;     // id of "[empty_spk]"
     int stts_token_id    = -1;       // id of "[Stts]"
     int ptts_token_id    = -1;       // id of "[Ptts]"
 
     // Build the decorated prompt string, same as Python speaker.decorate_code_prompts
     std::string decorate(const std::string& text, int speed) const {
         std::string speed_tag = "[speed_" + std::to_string(speed) + "]";
+        if (!voice_prompt_codes.empty())
+            return "[Stts][empty_spk]" + voice_prompt_text + speed_tag + text + "[Ptts]";
         // "[Stts][spk_emb]{speed_tag}{text}[Ptts]"
         return "[Stts][spk_emb]" + speed_tag + text + "[Ptts]";
     }
@@ -89,6 +95,7 @@ ChatTTS::ChatTTS(const ChatTTSConfig& cfg) : impl_(std::make_unique<Impl>()) {
     fprintf(stderr, "[ChatTTS] ISTFT OK\n");
 
     impl_->spk_emb_token_id = impl_->tokenizer->token_to_id("[spk_emb]");
+    impl_->empty_spk_token_id = impl_->tokenizer->token_to_id("[empty_spk]");
     fprintf(stderr, "[ChatTTS] ctor done, spk_emb_token_id=%d\n", impl_->spk_emb_token_id);
 }
 
@@ -124,6 +131,63 @@ void ChatTTS::set_speaker(const std::vector<float>& spk_emb_f32) {
         impl_->spk_emb[i] = f32_to_f16(spk_emb_f32[i] * scale);
 }
 
+bool ChatTTS::load_voice_prompt(const std::string& prompt_path,
+                                const std::string& ref_text) {
+    if (ref_text.empty()) {
+        fprintf(stderr, "[ChatTTS] voice prompt requires --ref-text\n");
+        return false;
+    }
+
+    std::ifstream f(prompt_path, std::ios::binary);
+    if (!f.is_open()) return false;
+
+    char magic[8] = {};
+    uint32_t num_vq = 0;
+    uint32_t frames = 0;
+    f.read(magic, sizeof(magic));
+    f.read(reinterpret_cast<char*>(&num_vq), sizeof(num_vq));
+    f.read(reinterpret_cast<char*>(&frames), sizeof(frames));
+    if (!f || std::memcmp(magic, "CTTSPRM1", 8) != 0 || num_vq != 4 || frames == 0) {
+        fprintf(stderr, "[ChatTTS] invalid voice prompt header: %s\n", prompt_path.c_str());
+        return false;
+    }
+    if ((uint64_t)frames * num_vq > 1000000ULL) {
+        fprintf(stderr, "[ChatTTS] voice prompt is unreasonably large: %u frames\n", frames);
+        return false;
+    }
+
+    std::vector<int> codes((size_t)frames * num_vq);
+    f.read(reinterpret_cast<char*>(codes.data()),
+           static_cast<std::streamsize>(codes.size() * sizeof(int32_t)));
+    if (!f) {
+        fprintf(stderr, "[ChatTTS] truncated voice prompt: %s\n", prompt_path.c_str());
+        return false;
+    }
+    for (int code : codes) {
+        if (code < 0 || code >= 625) {
+            fprintf(stderr, "[ChatTTS] voice prompt code out of range: %d\n", code);
+            return false;
+        }
+    }
+    if ((int)frames >= impl_->gpt->seqlen()) {
+        fprintf(stderr, "[ChatTTS] voice prompt has too many frames for GPT SEQLEN=%d\n",
+                impl_->gpt->seqlen());
+        return false;
+    }
+
+    impl_->voice_prompt_codes = std::move(codes);
+    impl_->voice_prompt_frames = static_cast<int>(frames);
+    impl_->voice_prompt_text = ref_text;
+    fprintf(stderr, "[ChatTTS] voice prompt loaded: %d frames\n", impl_->voice_prompt_frames);
+    return true;
+}
+
+void ChatTTS::clear_voice_prompt() {
+    impl_->voice_prompt_codes.clear();
+    impl_->voice_prompt_frames = 0;
+    impl_->voice_prompt_text.clear();
+}
+
 // ── Infer ────────────────────────────────────────────────────────────────────
 
 std::vector<float> ChatTTS::infer(const std::string& text,
@@ -139,6 +203,13 @@ std::vector<float> ChatTTS::infer(const std::string& text,
     std::vector<int> input_ids = impl_->tokenizer->encode(decorated);
     if (input_ids.empty())
         throw std::runtime_error("ChatTTS::infer: tokenization produced empty ids");
+
+    if (!impl_->voice_prompt_codes.empty()) {
+        input_ids.insert(input_ids.end(),
+                         static_cast<size_t>(impl_->voice_prompt_frames), 0);
+        if ((int)input_ids.size() >= impl_->gpt->seqlen())
+            throw std::runtime_error("ChatTTS::infer: voice prompt plus text exceeds GPT SEQLEN");
+    }
 
     // Find position of [spk_emb] token for speaker injection
     int spk_idx = -1;
@@ -159,7 +230,9 @@ std::vector<float> ChatTTS::infer(const std::string& text,
         params.top_k,
         params.repetition_penalty,
         params.max_new_token,
-        params.min_new_token
+        params.min_new_token,
+        impl_->voice_prompt_codes,
+        impl_->voice_prompt_frames
     );
 
     if (gpt_out.hiddens.empty())
@@ -212,6 +285,13 @@ int ChatTTS::infer_stream(const std::string& text,
     std::vector<int> input_ids = im.tokenizer->encode(decorated);
     if (input_ids.empty())
         throw std::runtime_error("ChatTTS::infer_stream: tokenization produced empty ids");
+
+    if (!im.voice_prompt_codes.empty()) {
+        input_ids.insert(input_ids.end(),
+                         static_cast<size_t>(im.voice_prompt_frames), 0);
+        if ((int)input_ids.size() >= im.gpt->seqlen())
+            throw std::runtime_error("ChatTTS::infer_stream: voice prompt plus text exceeds GPT SEQLEN");
+    }
 
     int spk_idx = -1;
     for (int i = 0; i < (int)input_ids.size(); ++i)
@@ -302,7 +382,9 @@ int ChatTTS::infer_stream(const std::string& text,
     };
 
     // 3. Prefill
-    GPTStepResult first = im.gpt->prefill_step(input_ids, im.spk_emb, spk_idx);
+    GPTStepResult first = im.gpt->prefill_step(
+        input_ids, im.spk_emb, spk_idx,
+        im.voice_prompt_codes, im.voice_prompt_frames);
     bool done = sample(first.logits, 0);
 
     std::vector<std::vector<uint16_t>> batch;
@@ -336,7 +418,8 @@ int ChatTTS::infer_stream(const std::string& text,
     };
 
     // 4. Decode loop — flush every stream_batch steps
-    for (int step = 1; step < params.max_new_token && !done; ++step) {
+    const int decode_capacity = im.gpt->seqlen() - static_cast<int>(input_ids.size());
+    for (int step = 1; step < params.max_new_token && step < decode_capacity && !done; ++step) {
         if (im.gpt->current_decode_step() >= im.gpt->seqlen()) break;
 
         GPTStepResult sr = im.gpt->decode_step(curr_codes);

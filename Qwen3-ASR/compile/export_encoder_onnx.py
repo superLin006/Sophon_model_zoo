@@ -14,7 +14,7 @@
   - 权重 fp16 存储（防 ONNX 2GB protobuf），计算 fp16（TPU-MLIR F16 量化对齐）
   - 引用真实子模块（conv/attention/FFN/ln_post/projector），仅重写 forward 控制流
 
-用法（qwen3-asr conda env）:
+用法（sophon-qwen3-asr conda env）:
   python export_encoder_onnx.py --model_path ../models
 """
 import os

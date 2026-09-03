@@ -5,7 +5,13 @@
 #include <functional>
 
 #include "bmruntime_interface.h"
+#ifndef SHERPA_ONNX_SOPHON_WHISPER
 #include "utils/audio_utils.h"
+#else
+// Minimal declarations needed when audio_utils.cpp is not compiled.
+#define MELS_FILTERS_SIZE 201
+struct VocabEntry { std::string token; int index; };
+#endif
 
 // 维度参数（n_state/n_layer/n_head/n_mels/vocab/n_audio_ctx/padding）
 // 全部在 init() 内从 bmodel net_info 运行时读出，base / large-v3-turbo 通用，见成员变量区。
@@ -29,8 +35,23 @@ public:
     //             "turbo" -> whisper_turbo_..., 维度自动从 bmodel 读取
     int  init(const char* model_dir, const char* precision = "F32",
               const char* model_name = "base");
+
+    // Returns the mel feature dimension read from the loaded bmodel (e.g. 128
+    // for turbo, 80 for base). Valid only after a successful init().
+    int  FeatureDim() const { return n_mels_; }
+#ifndef SHERPA_ONNX_SOPHON_WHISPER
     std::string run(const char* audio_file, const char* language,
                     TokenCallback callback = nullptr);
+#endif
+
+    // Run inference from a pre-computed mel spectrogram (shape: [n_mels, 3000],
+    // row-major). Skips WAV loading and mel extraction; the caller is responsible
+    // for providing correctly scaled features (e.g. after NormalizeWhisperFeatures).
+    // Returns decoded text. language: "zh" or "en".
+    std::string runFromMel(const float* mel_data, int n_mels, int n_frames,
+                           const char* language,
+                           TokenCallback callback = nullptr);
+
     void release();
 
 private:
@@ -53,7 +74,7 @@ private:
                      std::vector<int>& tokens,
                      TokenCallback callback);
 
-    // KV Cache 管理（与 MTK 完全一致）
+    // KV Cache 管理（与参考实现完全一致）
     void reset_kv_cache();
     void get_position_embedding(int pos, float* out);   // 从 positional_embedding_ 切片
     void create_self_attn_mask(int cache_len, float* out); // [1,1,1,449]

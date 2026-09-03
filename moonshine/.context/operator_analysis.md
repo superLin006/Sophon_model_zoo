@@ -12,7 +12,7 @@
 
 | 决策点 | 结论 | 理由(实测) |
 |--------|------|------------|
-| Encoder 方案 | **方案 B**(C++ 做 CMVN+Asinh, bmodel 输入 x_frames [1,2000,80]) | CMVN 在 F16 下特征误差实测 ~3.4%(max 2.5e-2);方案 B 的 bmodel 图无 ReduceMean/Log/Sqrt/Pow,且与 MTK 已验证划分一致。方案 A 仅 F32 目标可选(误差 3.4e-5,可忽略) |
+| Encoder 方案 | **方案 B**(C++ 做 CMVN+Asinh, bmodel 输入 x_frames [1,2000,80]) | CMVN 在 F16 下特征误差实测 ~3.4%(max 2.5e-2);方案 B 的 bmodel 图无 ReduceMean/Log/Sqrt/Pow,且与参考已验证划分一致。方案 A 仅 F32 目标可选(误差 3.4e-5,可忽略) |
 | Decoder 单步 | 23 输入 / 21 输出, embed/pos_emb/proj/RoPE/mask 全部进模型 | 算子全支持(Gather/Cos/Sin/Less/Or/Where 均可), 与 whisper Sophon 风格一致 |
 | max_dec_len | **128** | 10s 理论解码步数 ≈72(T_enc·384/16000·6), 实测 16.71s 音频 62 步;128 留余量 |
 | KV cache 格式 | 逐层 past_k_i/past_v_i [1,128,512] f32, **存旋转后 K**(与 transformers DynamicCache 一致) | 实测与 HF 逐层数值 0.0 差异 |
@@ -43,7 +43,7 @@
 
 1. F16 目标下 CMVN 实测误差 ~3.4%(语音波形幅度小, 均值相减存在灾难性消去);C++ 用 f32/f64 完全消除
 2. bmodel 图更小更稳(无 ReduceMean/Log/Sqrt/Pow)
-3. 与 MTK 已验证的 CPU/NPU 划分一致, C++ 预处理逻辑可复用
+3. 与参考已验证的 CPU/NPU 划分一致, C++ 预处理逻辑可复用
 4. C++ `std::asinh` 直接可用, 零分解误差
 
 > 方案 A 保留为 F32 目标备选: 精度实测可接受(argmax 不变, logits 差 7.6e-6)。若后续要做"零预处理"的纯 F32 版, 直接采用 1.4 节代码。
@@ -55,7 +55,7 @@
 def make_sliding_mask(t_enc, left, right, dtype=torch.float32):
     """transformers 语义 sliding window mask(与 HF create_bidirectional_mask 全1mask 逐元素一致, 已实测 0 差异):
     keep: (dist>=0 & dist<left) | (dist<0 & -dist<right), dist = q - k
-    [16,4]: dist∈[-3,15]; [16,0]: dist∈[0,15]   ← 注意与 MTK 实现差 1 个位置(见 6.5)"""
+    [16,4]: dist∈[-3,15]; [16,0]: dist∈[0,15]   ← 注意与参考实现差 1 个位置(见 6.5)"""
     q = torch.arange(t_enc)[:, None]; k = torch.arange(t_enc)[None, :]
     dist = q - k
     keep = ((dist >= 0) & (dist < left)) | ((dist < 0) & (-dist < right))
@@ -148,7 +148,7 @@ class EncoderWrapperFull(nn.Module):
 | RoPE cos/sin 计算(位置=cache_len) | **模型内**(MatMul/Mul + Cos/Sin + Concat) | Cos/Sin ✓ 支持; 回退: C++ 传 cos/sin [1,1,32](见 5.3) |
 | causal mask 生成 | **模型内**(Less + Or + Where, 从 cache_len 生成) | 免去 C++ 每步造 mask; whisper 是 C++ 传 mask, 两种都可行 |
 | encoder(cross) mask | **不需要** | 固定 10s 全有效; 如未来变长再补 [1,1,1,500] 输入 |
-| cross-attn KV | **每步重算**(无缓存) | 与 HF/MTK 一致; 500×512 每层每步 ~26 MFLOP, 可忽略 |
+| cross-attn KV | **每步重算**(无缓存) | 与 HF/参考实现一致; 500×512 每层每步 ~26 MFLOP, 可忽略 |
 | KV cache | 逐层输入 past_k/v_i [1,128,512], 输出 new_k/v_i [1,1,512] | whisper 风格(逐层命名), C++ 指针直通; 存**旋转后 K** |
 
 ### 2.2 输入输出完整定义(最终接口)
@@ -199,7 +199,7 @@ class DecoderWrapper(nn.Module):
 
     def apply_rope(self, q, k, cos, sin):
         """HF apply_rotary_pos_emb 等价(interleaved), 显式 stack/flatten 替代 repeat_interleave
-        (onnx RepeatInterleave 无对应算子; 与 MTK 的 rotate_half 相同手法)"""
+        (onnx RepeatInterleave 无对应算子; 与参考实现的 rotate_half 相同手法)"""
         cos_i = torch.stack([cos[..., :16], cos[..., :16]], dim=-1).flatten(-2)   # [1,1,32] c0,c0,c1,c1,...
         sin_i = torch.stack([sin[..., :16], sin[..., :16]], dim=-1).flatten(-2)
         q_rot, q_pass = q[..., :32], q[..., 32:]
@@ -409,16 +409,16 @@ def fix_conv_kernel_shape(model):
 | decoder wrapper vs HF(41 步) | logits max_abs 9.5e-6, token 序列一致, argmax 100% | 图结构正确性已验证 |
 | ORT 逐步 vs wrapper | max_abs 2.3e-5, argmax 100% | ONNX 图正确性已验证 |
 
-**RoPE F16 风险与回退**: BM1684X 的 Sin/Cos 走 LUT, 实际精度以 bmodel 转换后实测为准。若 F16 下 cos/sin 误差导致转写劣化, 回退方案(一行切换): C++ 预计算 f32 的 cos/sin 表(`inv_freq` 表 [128,32], MTK `precompute_rope_table` 同款逻辑), 每步按 cache_len 切片传 `cos_input/sin_input [1,1,32] f32` 两个输入, wrapper 内 `cos = cos_input.unsqueeze(1)` 替代第 3 步计算。**接口预留此两种形态, 转换后按实测精度二选一**。
+**RoPE F16 风险与回退**: BM1684X 的 Sin/Cos 走 LUT, 实际精度以 bmodel 转换后实测为准。若 F16 下 cos/sin 误差导致转写劣化, 回退方案(一行切换): C++ 预计算 f32 的 cos/sin 表(`inv_freq` 表 [128,32], 参考实现 `precompute_rope_table` 同款逻辑), 每步按 cache_len 切片传 `cos_input/sin_input [1,1,32] f32` 两个输入, wrapper 内 `cos = cos_input.unsqueeze(1)` 替代第 3 步计算。**接口预留此两种形态, 转换后按实测精度二选一**。
 
 ---
 
 ## 6. 关键坑(实测发现, 移植必读)
 
 1. **HF decoder 原地修改 encoder_hidden_states**: `decoder.forward` 内 `encoder_hidden_states += pos_emb` 会修改调用者的 tensor(baseline test_pytorch.py 的手动循环因此从第 2 步起是**双重 pos_emb**)。验证脚本必须每步传 `enc_out.clone()`。bmodel 是纯函数无此问题, 但**精度对比的 ground truth 必须以"每步传干净副本"的 HF 循环为准**(本分析已验证的 41 步轨迹即按此修正)。
-2. **causal mask 的尾部槽语义**: 当前 token 的 k/v 拼接在缓存末尾(位置 max_dec_len), mask 必须标 `位置0..cache_len-1 + 位置max_dec_len` 有效——若按"位置 0..cache_len 有效"写, attention 会去关注全零的缓存槽, 输出完全错误(曾导致 argmax 0% 一致, 修复后 100%)。MTK 的 dummy mask(仅末尾有效)同样错误(只 attend 当前 token, 丢失历史上下文)。
-3. **HF CausalConv1d 自带 left_pad**: `MoonshineStreamingCausalConv1d.forward` 内部 `F.pad(x, (left_pad, 0))`, wrapper 外层不能再 pad(双重 padding 输出 503 帧而非 500)。MTK 代码用外层 pad + 普通 Conv1d 是另一套实现, 勿混用。
-4. **sliding window mask 边界与 MTK 差 1 位**: transformers 语义 keep dist∈[-right+1, left-1]([16,4]→[-3,15]); MTK 的 `create_sliding_window_mask` 是 [-right, left-1](含 -4)。必须用 transformers 语义(本方案 `make_sliding_mask` 与 HF 逐元素 0 差异)。
+2. **causal mask 的尾部槽语义**: 当前 token 的 k/v 拼接在缓存末尾(位置 max_dec_len), mask 必须标 `位置0..cache_len-1 + 位置max_dec_len` 有效——若按"位置 0..cache_len 有效"写, attention 会去关注全零的缓存槽, 输出完全错误(曾导致 argmax 0% 一致, 修复后 100%)。参考实现的 dummy mask(仅末尾有效)同样错误(只 attend 当前 token, 丢失历史上下文)。
+3. **HF CausalConv1d 自带 left_pad**: `MoonshineStreamingCausalConv1d.forward` 内部 `F.pad(x, (left_pad, 0))`, wrapper 外层不能再 pad(双重 padding 输出 503 帧而非 500)。参考实现在外层 pad + 普通 Conv1d 是另一套实现, 勿混用。
+4. **sliding window mask 边界与参考实现差 1 位**: transformers 语义 keep dist∈[-right+1, left-1]([16,4]→[-3,15]); 参考实现的 `create_sliding_window_mask` 是 [-right, left-1](含 -4)。必须用 transformers 语义(本方案 `make_sliding_mask` 与 HF 逐元素 0 差异)。
 5. **onnxsim 0.6.3 不支持 Split 新格式**(见 4.2); **torch 2.11 导出必须显式 `config._attn_implementation="eager"`**(sdpa 会导出 F.scaled_dot_product_attention 自定义路径)。
 6. **int64 边界**: ONNX 输入用 int64 导出, TPU-MLIR 编译时自动降 int32; C++ 上传 cast 到 int32(知识库规则)。
 7. **KV dummy 列表推导式**: `[torch.zeros(...) for _ in range(10)]`, 不能用 `* 10`。
@@ -442,7 +442,7 @@ def fix_conv_kernel_shape(model):
 - [ ] decoder MLP 用显式 Slice 替代 chunk(避免 Split num_outputs)
 - [ ] encoder Conv 补 kernel_shape(`fix_conv_kernel_shape`)
 - [ ] opset 统一为 17(onnxsim 后检查 `model.opset_import[0].version`)
-- [ ] 10 层 sliding window mask 用 transformers 语义预计算(`make_sliding_mask`), 不用 MTK 版
+- [ ] 10 层 sliding window mask 用 transformers 语义预计算(`make_sliding_mask`), 不用参考实现版
 - [ ] causal mask 有效位 = `(arange < cache_len) | (arange == max_dec_len)`
 - [ ] 方案 B: 导出 `log_k` 资产给 C++(`encoder.embedder.comp.log_k`)
 - [ ] onnxsim 后 `onnx.checker.check_model` 通过
@@ -452,11 +452,11 @@ def fix_conv_kernel_shape(model):
 
 ---
 
-## 9. 与 MTK 方案差异对照
+## 9. 与参考方案差异对照
 
-| 项 | MTK(MDLA 5.3) | 本方案(BM1684X) | 原因 |
+| 项 | 参考实现(NPU 5.3) | 本方案(BM1684X) | 原因 |
 |----|----------------|------------------|------|
-| CMVN+Asinh | CPU | CPU(方案 B 同款) | 两边都缺算子/怕精度: MTK 缺 Log, BM1684X 是 F16 精度风险 |
+| CMVN+Asinh | CPU | CPU(方案 B 同款) | 两边都缺算子/怕精度: 参考实现缺 Log, BM1684X 是 F16 精度风险 |
 | encoder sliding mask | 预计算 buffer | 预计算 buffer | 相同; 但边界语义差 1 位(见 6.4), 必须用 transformers 版 |
 | embed_tokens | CPU 查表 | **模型内 Gather** | BM1684X 支持 Gather |
 | encoder pos_emb+proj | CPU | **模型内**(常量折叠 Gather + MatMul) | BM1684X 支持 |

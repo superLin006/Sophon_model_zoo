@@ -1,6 +1,15 @@
-numpy>=1.24
-scipy>=1.10
-torch>=2.0
-torchaudio>=2.0
-onnx>=1.14
-onnxruntime>=1.15
+# zipformer — ONNX 导出 + 上板验证环境（实测版本，源：conda sophon-zipformer）
+# 新建环境：
+#   conda create -n sophon-zipformer python=3.10 -y
+#   conda run -n sophon-zipformer python -m pip install -r requirements.txt
+# 说明：zipformer 模型权重源自 sherpa-onnx 生态的 zipformer（encoder/decoder/joiner），
+#       导出脚本只依赖 torch/onnx 全家桶，无需额外模型库；torch 走 CPU 官方源。
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
+torchaudio==2.11.0+cpu
+onnx==1.21.0
+onnxruntime==1.23.2
+onnxsim==0.6.3
+numpy==2.2.6
+scipy==1.15.3
+tqdm==4.67.3

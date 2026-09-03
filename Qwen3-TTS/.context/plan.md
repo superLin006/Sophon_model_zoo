@@ -2,7 +2,7 @@
 
 ## 目标
 
-将 `Qwen3-TTS-12Hz-0.6B-CustomVoice`（自回归 LLM 型 TTS）移植到 Sophon BM1684X（172.16.25.248，root/1），C++ 部署并完成 RTF 测试。
+将 `Qwen3-TTS-12Hz-0.6B-CustomVoice`（自回归 LLM 型 TTS）移植到 Sophon BM1684X，C++ 部署并完成 RTF 测试（板卡连接信息由部署环境变量提供）。
 
 ## 模型架构
 
@@ -58,4 +58,4 @@ CPU 侧：文本 tokenizer + embedding 组合 + 采样逻辑。
 - Conda: `qwen3-tts-sophon`（py3.10 / torch 2.6 / transformers 4.57.3 / qwen-tts 0.1.1）
 - TPU-MLIR: `sophgo/tpuc_dev:latest`（Docker）+ `0_Toolkits/tpu_mlir-1.28.1-py3-none-any.whl`
 - 交叉编译: `sophon-cross-build`（Docker）+ `0_Toolkits/soc-sdk-sp4`
-- 模型: `/home/xh/itc_project/RK_model_zoo/models/Qwen3-TTS-12Hz-0.6B-CustomVoice`
+- 模型: `$QWEN3_TTS_MODEL`（环境变量指定权重目录）

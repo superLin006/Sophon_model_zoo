@@ -20,16 +20,17 @@
 
 ## ⚠️ 头号铁律：glibc 工具链必须匹配板卡
 
-板卡（Ubuntu 20.04）的 glibc 符号最高到 `GLIBC_2.30`。用过新的编译器交叉编译，
-产物会要求板卡没有的新符号，一运行就 `GLIBC_2.xx not found`。
+板卡是 Ubuntu 20.04 / aarch64，**glibc 2.31**（实测 `ldd --version` = `Ubuntu GLIBC 2.31-0ubuntu9`，`/lib/aarch64-linux-gnu/libc.so.6` 同）。用过新的编译器交叉编译，产物会要求板卡没有的新符号，一运行就 `GLIBC_2.xx not found`。
 
-| 工具链 | 产物需要 | 板卡 2.30 | 结论 |
+| 工具链 | 产物需要的最高符号 | 板卡 glibc 2.31 | 结论 |
 |---|---|---|---|
-| WSL 系统 GCC 15 | GLIBC_2.43 | ✗ | 跑不了 |
-| 服务器 Buildroot GCC 10 | GLIBC_2.34 | ✗ | 跑不了 |
-| **`sophon-cross-build` 镜像（Ubuntu 20.04 + GCC 9.4 + glibc 2.31）** | **GLIBC_2.29** | ✓ | **用这个** |
+| WSL 系统 GCC 15 | GLIBC_2.43 | ✗ 超出 | 跑不了 |
+| 服务器 Buildroot GCC 10 | GLIBC_2.34 | ✗ 超出 | 跑不了 |
+| **`sophon-cross-build` 镜像（Ubuntu 20.04 + GCC 9.4 + glibc 2.31）** | **GLIBC_2.29** | ✓ 在范围内 | **用这个** |
 
-镜像定义：`3_docker/Dockerfile.cross-build`（`ubuntu:20.04` + `g++-aarch64-linux-gnu`）。
+镜像与板卡的 glibc 主版本相同（都是 2.31），差别在镜像内 GCC 9.4 生成的产物只引用到 `GLIBC_2.29` 及更低的符号，因此留有余量。**判断标准始终是"产物需要的最高符号 ≤ 板卡 glibc"，不是"工具链 glibc 等于板卡 glibc"**——用新版 GCC 即便在 2.31 的容器里也会引入更高符号。
+
+镜像定义：`3_docker/Dockerfile.cross-build`（`ubuntu:20.04` + `g++-aarch64-linux-gnu`，不含宿主架构 gcc）。
 板卡 native GCC 9.3 也能编，但 `-flto` 单核会 OOM 重启 —— **务必 `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF`**。
 
 ---
@@ -53,7 +54,7 @@
 产物：`build-xxx/install/{include,lib}`。验证：
 ```bash
 aarch64-linux-gnu-objdump -T install/lib/libsherpa-onnx-c-api.so | grep -oE 'GLIBC_2\.[0-9]+' | sort -uV | tail
-# 最高应 <= 2.30；并确认 NEEDED 含 libbmrt.so / libbmlib.so
+# 最高应 <= 2.31（板卡实测版本）；并确认 NEEDED 含 libbmrt.so / libbmlib.so
 ```
 
 ---

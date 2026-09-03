@@ -1,73 +1,83 @@
-#!/bin/bash
-# 将 QwenLLM 工作目录同步到板子并编译 python_demo
-# 用法: ./deploy_to_board.sh
+#!/usr/bin/env bash
+set -euo pipefail
 
-BOARD_IP="172.16.40.75"
-BOARD_USER="root"
-BOARD_PASS="1"
-BOARD_DIR="/data/sophon-llm"
+usage() {
+    printf '用法: BOARD_IP=<ip> [BOARD_USER=root] [BOARD_PORT=22] [BOARD_DIR=/data/qwenllm] %s [--test]\n' "$0"
+    printf '可用 BMODEL 覆盖默认的 v95e-soup bmodel 路径。\n'
+}
 
-SSH="sshpass -p ${BOARD_PASS} ssh -o StrictHostKeyChecking=no ${BOARD_USER}@${BOARD_IP}"
-SCP="sshpass -p ${BOARD_PASS} scp -o StrictHostKeyChecking=no -r"
-# 脚本在 scripts/ 下，QwenLLM 根目录是上一级
-QWEN_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-
-echo "====== 1. 创建板子目录结构 ======"
-$SSH "mkdir -p ${BOARD_DIR}/qwen3/python_demo ${BOARD_DIR}/qwen3/config"
-
-echo "====== 2. 同步 config 和 python_demo 源码（本地 demo/）======"
-${SCP} ${QWEN_DIR}/demo/python_demo/ ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/qwen3/python_demo/
-${SCP} ${QWEN_DIR}/demo/config/      ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/qwen3/config/
-
-echo "====== 3. 同步 benchmark 脚本 ======"
-sshpass -p ${BOARD_PASS} scp -o StrictHostKeyChecking=no \
-    ${QWEN_DIR}/benchmark_intent.py ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/
-
-echo "====== 4. 同步 bmodel 文件（大文件，需要时间）本地 models/ ======"
-QWEN3_BMODEL=$(ls ${QWEN_DIR}/models/qwen3_4b/*.bmodel 2>/dev/null | head -1)
-if [ -n "${QWEN3_BMODEL}" ]; then
-    echo "  -> qwen3-4b..."
-    sshpass -p ${BOARD_PASS} rsync -av \
-        -e "ssh -o StrictHostKeyChecking=no" \
-        "${QWEN3_BMODEL}" ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/qwen3/
+if [[ $# -gt 1 || ( $# -eq 1 && $1 != "--test" ) ]]; then
+    usage >&2
+    exit 2
 fi
 
-for size_dir in qwen3_0.6b qwen3_1.7b; do
-    SMALL_BMODEL=$(ls ${QWEN_DIR}/models/${size_dir}/*.bmodel 2>/dev/null | head -1)
-    if [ -n "${SMALL_BMODEL}" ]; then
-        echo "  -> ${size_dir}..."
-        sshpass -p ${BOARD_PASS} rsync -av \
-            -e "ssh -o StrictHostKeyChecking=no" \
-            "${SMALL_BMODEL}" ${BOARD_USER}@${BOARD_IP}:${BOARD_DIR}/qwen3/
-    fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+QWEN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BOARD_IP="${BOARD_IP:?请设置 BOARD_IP}"
+BOARD_USER="${BOARD_USER:-root}"
+BOARD_PORT="${BOARD_PORT:-22}"
+BOARD_DIR="${BOARD_DIR:-/data/qwenllm}"
+BMODEL="${BMODEL:-${QWEN_DIR}/models/BM1684X/qwen3_0.6b_dispatch_v95e_soup_w8bf16_seq2048.bmodel}"
+CONFIG_DIR="${CONFIG_DIR:-${QWEN_DIR}/demo/config}"
+DEMO_DIR="${DEMO_DIR:-${QWEN_DIR}/demo/python_demo}"
+BENCHMARK="${BENCHMARK:-${QWEN_DIR}/benchmark_intent.py}"
+REMOTE="${BOARD_USER}@${BOARD_IP}"
+
+if [[ -n "${BOARD_PASS:-}" ]]; then
+    command -v sshpass >/dev/null || { printf '未找到 sshpass，或改用 SSH key。\n' >&2; exit 1; }
+    SSH=(sshpass -p "${BOARD_PASS}" ssh -o StrictHostKeyChecking=no -p "${BOARD_PORT}")
+    SCP=(sshpass -p "${BOARD_PASS}" scp -o StrictHostKeyChecking=no -P "${BOARD_PORT}")
+else
+    SSH=(ssh -p "${BOARD_PORT}")
+    SCP=(scp -P "${BOARD_PORT}")
+fi
+
+require_file() {
+    [[ -f "$1" ]] || { printf '文件不存在: %s\n' "$1" >&2; exit 1; }
+}
+
+require_file "$BMODEL"
+require_file "$BENCHMARK"
+for name in tokenizer.json tokenizer_config.json vocab.json config.json generation_config.json; do
+    [[ -f "${CONFIG_DIR}/${name}" ]] || {
+        printf '配置文件不存在: %s\n' "${CONFIG_DIR}/${name}" >&2
+        exit 1
+    }
+done
+[[ -f "${DEMO_DIR}/CMakeLists.txt" ]] || { printf 'Python demo 不存在: %s\n' "${DEMO_DIR}" >&2; exit 1; }
+
+SCP_RECURSIVE=("${SCP[@]}" -r)
+
+BMODEL_NAME="$(basename "$BMODEL")"
+"${SSH[@]}" "$REMOTE" "mkdir -p '${BOARD_DIR}/models' '${BOARD_DIR}/config'"
+"${SCP_RECURSIVE[@]}" "$DEMO_DIR" "${REMOTE}:${BOARD_DIR}/"
+"${SCP[@]}" "$BMODEL" "${REMOTE}:${BOARD_DIR}/models/"
+"${SCP[@]}" "$BENCHMARK" "${REMOTE}:${BOARD_DIR}/"
+for name in tokenizer.json tokenizer_config.json vocab.json config.json generation_config.json; do
+    "${SCP[@]}" "${CONFIG_DIR}/${name}" "${REMOTE}:${BOARD_DIR}/config/"
 done
 
-echo "====== 5. 在板子上编译 qwen3 python_demo ======"
-$SSH "cd ${BOARD_DIR}/qwen3/python_demo && \
-      mkdir -p build && \
-      cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j4 && \
-      cp *.cpython*.so .. && \
-      echo 'qwen3 python_demo 编译完成'"
+check_md5() {
+    local local_file="$1"
+    local remote_file="$2"
+    local local_md5 remote_md5
+    local_md5="$(md5sum "$local_file" | cut -d' ' -f1)"
+    remote_md5="$("${SSH[@]}" "$REMOTE" "md5sum -- '${remote_file}' | cut -d' ' -f1")"
+    [[ "$local_md5" == "$remote_md5" ]] || {
+        printf 'md5 不一致: %s (local=%s board=%s)\n' "$local_file" "$local_md5" "$remote_md5" >&2
+        exit 1
+    }
+    printf 'md5 OK: %s\n' "$(basename "$local_file")"
+}
 
-echo ""
-echo "====== 部署完成！======"
-echo ""
-echo "在板子上运行 benchmark（用 nohup 防止 SSH 断开中断）："
-echo ""
-echo "  # qwen3-0.6b"
-echo "  BMODEL=\$(ls ${BOARD_DIR}/qwen3/qwen3-0.6b*.bmodel | head -1)"
-echo "  nohup python3 ${BOARD_DIR}/benchmark_intent.py \\"
-echo "    -m \"\${BMODEL}\" -c ${BOARD_DIR}/qwen3/config -n qwen3-0.6b --no_think \\"
-echo "    > ${BOARD_DIR}/result_0.6b.log 2>&1 &"
-echo ""
-echo "  # qwen3-1.7b"
-echo "  BMODEL=\$(ls ${BOARD_DIR}/qwen3/qwen3-1.7b*.bmodel | head -1)"
-echo "  nohup python3 ${BOARD_DIR}/benchmark_intent.py \\"
-echo "    -m \"\${BMODEL}\" -c ${BOARD_DIR}/qwen3/config -n qwen3-1.7b --no_think \\"
-echo "    > ${BOARD_DIR}/result_1.7b.log 2>&1 &"
-echo ""
-echo "  # qwen3-4b"
-echo "  BMODEL=\$(ls ${BOARD_DIR}/qwen3/qwen3-4b*.bmodel | head -1)"
-echo "  nohup python3 ${BOARD_DIR}/benchmark_intent.py \\"
-echo "    -m \"\${BMODEL}\" -c ${BOARD_DIR}/qwen3/config -n qwen3-4b --no_think \\"
-echo "    > ${BOARD_DIR}/result_4b.log 2>&1 &"
+check_md5 "$BMODEL" "${BOARD_DIR}/models/${BMODEL_NAME}"
+for name in tokenizer.json tokenizer_config.json vocab.json config.json generation_config.json; do
+    check_md5 "${CONFIG_DIR}/${name}" "${BOARD_DIR}/config/${name}"
+done
+
+if [[ "${1:-}" == "--test" ]]; then
+    "${SSH[@]}" "$REMOTE" "cd '${BOARD_DIR}/python_demo' && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j4 && cp build/chat*.so ."
+    "${SSH[@]}" "$REMOTE" "cd '${BOARD_DIR}' && python3 benchmark_intent.py -m 'models/${BMODEL_NAME}' -c config -n qwen3-0.6b --no_think"
+fi
+
+printf '部署完成: %s\n' "${REMOTE}:${BOARD_DIR}"

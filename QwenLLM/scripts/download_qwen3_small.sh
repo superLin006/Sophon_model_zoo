@@ -20,7 +20,7 @@ download_model() {
     fi
 
     echo "[INFO] 下载 ${model_id} → ${target_dir}"
-    conda run -n sophon-llm python3 -c "
+    conda run -n sophon-qwenllm python3 -c "
 from modelscope import snapshot_download
 path = snapshot_download('${model_id}', cache_dir='${QWEN_DIR}', local_dir='${target_dir}')
 print('[DONE] 下载完成:', path)

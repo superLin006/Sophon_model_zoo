@@ -1,0 +1,290 @@
+[ASR] 15 tokens, total 0.58s (mel 0.11 + enc 0.08 + prefill 0.10 + decode 0.29, 52.4 tok/s)
+[ASR] 15 tokens, total 0.53s (mel 0.06 + enc 0.08 + prefill 0.10 + decode 0.28, 53.6 tok/s)
+[ASR] 15 tokens, total 0.55s (mel 0.08 + enc 0.08 + prefill 0.10 + decode 0.28, 53.2 tok/s)
+[ASR] 18 tokens, total 0.60s (mel 0.07 + enc 0.09 + prefill 0.11 + decode 0.34, 53.3 tok/s)
+[ASR] 17 tokens, total 0.59s (mel 0.08 + enc 0.09 + prefill 0.11 + decode 0.32, 53.2 tok/s)
+[ASR] 25 tokens, total 0.78s (mel 0.12 + enc 0.09 + prefill 0.11 + decode 0.47, 53.2 tok/s)
+[ASR] 14 tokens, total 0.55s (mel 0.09 + enc 0.09 + prefill 0.11 + decode 0.27, 52.7 tok/s)
+[ASR] 18 tokens, total 0.64s (mel 0.11 + enc 0.09 + prefill 0.11 + decode 0.34, 53.3 tok/s)
+[ASR] 23 tokens, total 0.73s (mel 0.10 + enc 0.09 + prefill 0.11 + decode 0.44, 52.3 tok/s)
+[ASR] 24 tokens, total 0.78s (mel 0.14 + enc 0.09 + prefill 0.11 + decode 0.45, 53.3 tok/s)
+[ASR] 15 tokens, total 0.56s (mel 0.09 + enc 0.09 + prefill 0.11 + decode 0.29, 52.6 tok/s)
+[ASR] 16 tokens, total 0.55s (mel 0.05 + enc 0.09 + prefill 0.11 + decode 0.31, 52.4 tok/s)
+[ASR] 22 tokens, total 0.73s (mel 0.12 + enc 0.09 + prefill 0.11 + decode 0.42, 52.8 tok/s)
+[ASR] 15 tokens, total 0.53s (mel 0.06 + enc 0.09 + prefill 0.11 + decode 0.28, 53.1 tok/s)
+[ASR] 15 tokens, total 0.57s (mel 0.09 + enc 0.09 + prefill 0.11 + decode 0.29, 52.6 tok/s)
+open usercpu.so, init user_cpu_init 
+[Qwen3] loaded /data/qwen3_asr/qwen3_asr_merged_w8bf16.bmodel
+[Qwen3] Layers=28 MAX_INPUT=512 SEQLEN=512 kv_per_token=1024 hidden=1024
+[ASR] devmem after LLM: used=1355/10240 MB
+[Enc] loaded (net=qwen3_asr_encoder)
+[ASR] devmem after enc: used=1355/10240 MB
+[ASR] prefix 9 tokens, suffix 6 tokens
+[QwenMel] filters loaded [128, 201] (25728 elems)
+Tokenizer loaded: vocab_size=151705
+[ASR] tokenizer loaded
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_01.wav
+[Output] language None<asr_text>The device completed the benchmark without errors and produced clear speech.
+[Perf]   0.58s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_02.wav
+[Output] language English<asr_text>Please send the final report before the meeting starts tomorrow morning.
+[Perf]   0.53s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_03.wav
+[Output] language English<asr_text>Edge computing reduces latency while keeping sensitive data on the device.
+[Perf]   0.55s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_04.wav
+[Output] language English<asr_text>The quick brown fox jumps over the lazy dog near the quiet mountain lake.
+[Perf]   0.60s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_05.wav
+[Output] language None<asr_text>Please verify the serial number and confirm the delivery date by Friday afternoon.
+[Perf]   0.59s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_06.wav
+[Output] language English<asr_text>The new compiler reduces memory usage and improves inference speed on the BMU680B4Tets.
+[Perf]   0.78s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_07.wav
+[Output] language English<asr_text>Quality evaluation requires both automated measurements and careful human listening.
+[Perf]   0.55s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_08.wav
+[Output] language English<asr_text>The system should remain stable during long audio generation, and repeated model loading.
+[Perf]   0.64s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_09.wav
+[Output] language None<asr_text>Numbers such as 123.45 and 12% must be pronounced correctly.
+[Perf]   0.73s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/en_10.wav
+[Output] language English<asr_text>This is a longer English paragraph designed to test rhythm, pauses, pronunciation, and stability across many words.
+[Perf]   0.78s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_01.wav
+[Output] language None<asr_text>春天来了，深圳的空气里有淡淡的花香。
+[Perf]   0.56s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_02.wav
+[Output] language Chinese<asr_text>请在今天下午五点之前提交最终版本的报告。
+[Perf]   0.55s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_03.wav
+[Output] language Chinese<asr_text>最台设备的额定电压是二百二十伏。最大功率为一千二百瓦。
+[Perf]   0.73s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_04.wav
+[Output] language Chinese<asr_text>我们将在下周一上午九点召开项目评审会议。
+[Perf]   0.53s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_05.wav
+[Output] language Chinese<asr_text>如果网络连接中断，请等待十秒后[ASR] 17 tokens, total 0.60s (mel 0.09 + enc 0.09 + prefill 0.11 + decode 0.32, 53.3 tok/s)
+[ASR] 14 tokens, total 0.53s (mel 0.07 + enc 0.09 + prefill 0.11 + decode 0.27, 52.4 tok/s)
+[ASR] 20 tokens, total 0.75s (mel 0.18 + enc 0.09 + prefill 0.11 + decode 0.38, 53.3 tok/s)
+[ASR] 17 tokens, total 0.59s (mel 0.07 + enc 0.09 + prefill 0.11 + decode 0.33, 52.0 tok/s)
+[ASR] 17 tokens, total 0.60s (mel 0.09 + enc 0.09 + prefill 0.11 + decode 0.32, 53.3 tok/s)
+[ASR] 16 tokens, total 0.57s (mel 0.08 + enc 0.09 + prefill 0.11 + decode 0.30, 52.5 tok/s)
+[ASR] 20 tokens, total 0.66s (mel 0.09 + enc 0.09 + prefill 0.11 + decode 0.37, 53.4 tok/s)
+[ASR] 25 tokens, total 0.78s (mel 0.11 + enc 0.09 + prefill 0.11 + decode 0.47, 52.9 tok/s)
+[ASR] 21 tokens, total 0.68s (mel 0.10 + enc 0.09 + prefill 0.11 + decode 0.39, 53.3 tok/s)
+[ASR] 30 tokens, total 0.90s (mel 0.14 + enc 0.09 + prefill 0.11 + decode 0.56, 53.2 tok/s)
+[ASR] 26 tokens, total 0.82s (mel 0.13 + enc 0.09 + prefill 0.11 + decode 0.50, 52.3 tok/s)
+[ASR] 20 tokens, total 0.70s (mel 0.13 + enc 0.09 + prefill 0.11 + decode 0.38, 53.3 tok/s)
+[ASR] 26 tokens, total 0.82s (mel 0.14 + enc 0.09 + prefill 0.11 + decode 0.49, 53.3 tok/s)
+[ASR] 28 tokens, total 0.86s (mel 0.13 + enc 0.09 + prefill 0.11 + decode 0.53, 52.4 tok/s)
+[ASR] 22 tokens, total 0.73s (mel 0.12 + enc 0.09 + prefill 0.11 + decode 0.41, 53.1 tok/s)
+[ASR] 16 tokens, total 0.60s (mel 0.11 + enc 0.09 + prefill 0.11 + decode 0.30, 53.0 tok/s)
+再重新尝试。
+[Perf]   0.57s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_06.wav
+[Output] language None<asr_text>这家餐厅距离地铁站只有三百米，步行大约需要五分钟。
+[Perf]   0.60s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_07.wav
+[Output] language Chinese<asr_text>请注意保存文件。系统将在二十分钟后自动重启。
+[Perf]   0.53s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_08.wav
+[Output] language Chinese<asr_text>合同中明确规定，延迟交付一天，将扣除除百分之零点五。
+[Perf]   0.75s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_09.wav
+[Output] language Chinese<asr_text>研发团队正在优化推理速度，同时降低设备的整体功耗。
+[Perf]   0.59s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_10.wav
+[Output] language None<asr_text>从今天开始，所有生产变更都必须经过两位工程师审核。
+[Perf]   0.60s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_11.wav
+[Output] language Chinese<asr_text>欢迎使用我们的语音合成系统。祝你今天工作顺利。
+[Perf]   0.57s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_12.wav
+[Output] language Chinese<asr_text>请把会议纪要发送给所有参会人员，并标注需要跟进的事项。
+[Perf]   0.66s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_13.wav
+[Output] language Chinese<asr_text>这段文字包含逗号、句号、冒号、分号，以及括号等多种标点。
+[Perf]   0.78s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_14.wav
+[Output] language None<asr_text>温度从零下五度升高到二十八度，天气逐渐变得温暖起来。
+[Perf]   0.68s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_15.wav
+[Output] language Chinese<asr_text>订单编号是 A二零二六零八幺七。验证码为七三九二零四，请仔细核对。
+[Perf]   0.90s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_16.wav
+[Output] language Chinese<asr_text>亏损TTS，可以在BM一六八四X上运行。当前序列长度设置为一九二。
+[Perf]   0.82s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_17.wav
+[Output] language Chinese<asr_text>HTTPP和HTTPSP和，使用不同的协议，但都可以传输网页内容。
+[Perf]   0.70s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_18.wav
+[Output] language Chinese<asr_text>本次实验的目标是比较 W4F16 与 W8B16 的合成质量和推理速度。
+[Perf]   0.82s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_19.wav
+[Output] language Chinese<asr_text>数据表明，模型大小从1.5 GB降低到1.1 GB，但仍然需要人工试听确认。
+[Perf]   0.86s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_20.wav
+[Output] language Chinese<asr_text>在边缘计算场景中，低延迟、低功耗和稳定的输出质量同样重要。
+[Perf]   0.73s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_21.wav
+[Output] language Chinese<asr_text>随着人工智能技术不断发展，语音交互正在进入更多日常应用场景。
+[Perf]   0.60s
+[ASR] 24 tokens, total 0.76s (mel 0.12 + enc 0.09 + prefill 0.11 + decode 0.45, 53.2 tok/s)
+[ASR] 23 tokens, total 0.74s (mel 0.12 + enc 0.09 + prefill 0.11 + decode 0.43, 53.1 tok/s)
+[ASR] 24 tokens, total 0.78s (mel 0.13 + enc 0.09 + prefill 0.11 + decode 0.46, 52.3 tok/s)
+[ASR] 22 tokens, total 0.70s (mel 0.10 + enc 0.09 + prefill 0.11 + decode 0.41, 53.3 tok/s)
+[ASR] 25 tokens, total 0.79s (mel 0.12 + enc 0.09 + prefill 0.11 + decode 0.47, 52.9 tok/s)
+[ASR] 19 tokens, total 0.66s (mel 0.11 + enc 0.09 + prefill 0.11 + decode 0.36, 53.0 tok/s)
+[ASR] 27 tokens, total 0.84s (mel 0.14 + enc 0.09 + prefill 0.11 + decode 0.51, 53.3 tok/s)
+[ASR] 24 tokens, total 0.76s (mel 0.11 + enc 0.09 + prefill 0.11 + decode 0.46, 52.4 tok/s)
+[ASR] 24 tokens, total 0.77s (mel 0.12 + enc 0.09 + prefill 0.11 + decode 0.45, 53.3 tok/s)
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_22.wav
+[Output] language Chinese<asr_text>长文本合成不仅考验模型的自然度，也考验缓存管理和解码逻辑的稳定性。
+[Perf]   0.76s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_23.wav
+[Output] language Chinese<asr_text>请按照文档中的步骤操作。如果遇到异常，请保留完整日志，再联系技术支持。
+[Perf]   0.74s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_24.wav
+[Output] language Chinese<asr_text>今天的测试覆盖了普通句子、英文缩写、数字百分比、单位和复杂标点。
+[Perf]   0.78s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_25.wav
+[Output] language None<asr_text>当输入文本较长时，系统会根据最大序列长度截断超出的语音帧。
+[Perf]   0.70s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_26.wav
+[Output] language Chinese<asr_text>我们需要对每一种量化方案进行独立验证。不能仅凭模型能够加载，就判断质量合格。
+[Perf]   0.79s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_27.wav
+[Output] language Chinese<asr_text>语音听起来是否自然，应该由人工视听结合转写结果共同判断。
+[Perf]   0.66s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_28.wav
+[Output] language Chinese<asr_text>如果W四F十六在更多样本上保持稳定，它可能成为体积和精度之间更好的折中方案。
+[Perf]   0.84s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_29.wav
+[Output] language Chinese<asr_text>实验结束后，将清理板卡上的临时文件，但会保留本地模型和测试日志。
+[Perf]   0.76s
+========================================
+
+========================================
+[Audio] /tmp/asr_extra_16k/w8/zh_30.wav
+[Output] language Chinese<asr_text>这是一段中等长度的中文内容，用来观察不同因素之间的连接是否平滑自然。
+[Perf]   0.77s
+========================================

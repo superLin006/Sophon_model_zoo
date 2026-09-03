@@ -1,0 +1,22 @@
+# Qwen3-ASR — ONNX 导出 + LLM 权重预处理环境（实测版本，源：conda sophon-qwen3-asr）
+# 新建环境：
+#   conda create -n sophon-qwen3-asr python=3.11 -y
+#   conda run -n sophon-qwen3-asr python -m pip install -r requirements.txt
+# 说明：
+#   - python 必须 3.11（torch 2.13.0+cpu 为 py311 轮子）；torch 走 CPU 官方源
+#   - encoder 导出：compile/export_encoder_onnx.py（使用本 env）
+#   - LLM 主体：transformers 5.14 权重前缀坑必须先 compile/make_models_llm_std.py 重命名，
+#     再在 Docker（tpumlir）内 llm_convert.py 直接转 bmodel（不需要本 env 的 torch）
+#   - 合并 encoder+LLM：compile/merge.sh（docker 内 model_tool --combine）
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0+cpu
+transformers==5.14.1
+onnx==1.22.0
+onnxruntime==1.28.0
+onnxsim==0.7.0
+safetensors==0.8.0
+numpy==2.4.6
+soundfile==0.14.0
+librosa==0.11.0
+scipy==1.17.1
+tqdm==4.70.0

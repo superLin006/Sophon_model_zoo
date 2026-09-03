@@ -1,5 +1,5 @@
 /**
- * Audio Processing Utilities Implementation for Whisper MTK NPU
+ * Audio Processing Utilities Implementation for Whisper NPU (BM1684X)
  *
  * Ported from RKNN Whisper implementation with FFTW integration
  */

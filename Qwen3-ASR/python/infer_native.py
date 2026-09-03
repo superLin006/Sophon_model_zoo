@@ -8,7 +8,7 @@ M0: Qwen3-ASR-0.6B 原生 CPU 推理基线 + dump。
   3. mel 特征数值 + filter bank 矩阵 → mel_zh.npz / mel_filters.npz
   4. encoder 输出帧数实测（375 or 800）
 
-用法（qwen3-asr conda env）:
+用法（sophon-qwen3-asr conda env）:
   python infer_native.py [--audio ../test_data/test_zh.wav]
 """
 import os
@@ -21,10 +21,14 @@ import torch
 torch.set_grad_enabled(False)
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--model_dir', default='../models')
-parser.add_argument('--audio', default='../test_data/test_zh.wav')
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+parser.add_argument('--model_dir', default=os.path.join(PROJECT_ROOT, 'models', 'qwen3-asr-0.6b'))
+parser.add_argument('--audio', default=os.path.join(PROJECT_ROOT, 'test_data', 'test_zh.wav'))
 parser.add_argument('--out_prefix', default='baseline_zh')
+parser.add_argument('--dump_dir', default='dump')
 args = parser.parse_args()
+DUMP_DIR = os.path.abspath(args.dump_dir)
 
 from transformers import AutoProcessor, AutoModelForMultimodalLM
 
@@ -76,7 +80,7 @@ print(f'\nraw     : {raw!r}')
 print(f'parsed  : {parsed}')
 
 # ── 3. 保存 dump ───────────────────────────────────────────────────────────
-os.makedirs('dump', exist_ok=True)
+os.makedirs(DUMP_DIR, exist_ok=True)
 out = {
     'audio': args.audio,
     'input_ids': ids,
@@ -88,16 +92,16 @@ out = {
     'raw': raw,
     'parsed': parsed,
 }
-with open(f'dump/{args.out_prefix}_inputs.json', 'w', encoding='utf-8') as f:
+with open(os.path.join(DUMP_DIR, f'{args.out_prefix}_inputs.json'), 'w', encoding='utf-8') as f:
     json.dump(out, f, ensure_ascii=False, indent=2)
 
 # mel 特征（float32）与 mask
-np.savez(f'dump/{args.out_prefix}_mel.npz',
+np.savez(os.path.join(DUMP_DIR, f'{args.out_prefix}_mel.npz'),
          input_features=feat.numpy().astype(np.float32),
          input_features_mask=feat_mask.numpy().astype(np.float32))
 
 # mel filter bank 矩阵（128, n_fft//2+1），供板卡前端使用
 mel_filters = processor.feature_extractor.mel_filters
-np.savez('dump/mel_filters.npz', mel_filters=mel_filters.astype(np.float32))
-print(f'\nSaved dump/{args.out_prefix}_inputs.json, dump/{args.out_prefix}_mel.npz, dump/mel_filters.npz')
+np.savez(os.path.join(DUMP_DIR, 'mel_filters.npz'), mel_filters=mel_filters.astype(np.float32))
+print(f'\nSaved {DUMP_DIR}/{args.out_prefix}_inputs.json, {DUMP_DIR}/{args.out_prefix}_mel.npz, {DUMP_DIR}/mel_filters.npz')
 print(f'filter bank shape: {mel_filters.shape}')

@@ -1,0 +1,101 @@
+[ASR] 40 tokens, total 1.77s (mel 0.14 + enc 0.09 + prefill 0.23 + decode 1.30, 30.7 tok/s)
+[ASR] 5 tokens, total 0.63s (mel 0.01 + enc 0.09 + prefill 0.31 + decode 0.22, 23.0 tok/s)
+[ASR] 7 tokens, total 0.63s (mel 0.01 + enc 0.09 + prefill 0.22 + decode 0.31, 22.9 tok/s)
+[ASR] 16 tokens, total 0.70s (mel 0.07 + enc 0.09 + prefill 0.14 + decode 0.40, 40.0 tok/s)
+[ASR] 25 tokens, total 1.56s (mel 0.07 + enc 0.09 + prefill 0.31 + decode 1.09, 23.0 tok/s)
+[ASR] 93 tokens, total 3.97s (mel 0.36 + enc 0.09 + prefill 0.14 + decode 3.37, 27.6 tok/s)
+[ASR] 82 tokens, total 4.11s (mel 0.36 + enc 0.10 + prefill 0.23 + decode 3.42, 24.0 tok/s)
+[ASR] 40 tokens, total 2.23s (mel 0.22 + enc 0.09 + prefill 0.15 + decode 1.78, 22.5 tok/s)
+[ASR] 35 tokens, total 1.92s (mel 0.15 + enc 0.10 + prefill 0.24 + decode 1.43, 24.5 tok/s)
+[ASR] 13 tokens, total 0.94s (mel 0.06 + enc 0.09 + prefill 0.14 + decode 0.65, 20.0 tok/s)
+[ASR] 23 tokens, total 1.32s (mel 0.07 + enc 0.09 + prefill 0.18 + decode 0.97, 23.7 tok/s)
+[ASR] 60 tokens, total 2.56s (mel 0.23 + enc 0.09 + prefill 0.22 + decode 2.03, 29.6 tok/s)
+open usercpu.so, init user_cpu_init 
+[Qwen3] loaded /data/qwen3_asr/qwen3_asr_merged_w8bf16.bmodel
+[Qwen3] Layers=28 MAX_INPUT=512 SEQLEN=512 kv_per_token=1024 hidden=1024
+[ASR] devmem after LLM: used=4794/10240 MB
+[Enc] loaded (net=qwen3_asr_encoder)
+[ASR] devmem after enc: used=4794/10240 MB
+[ASR] prefix 9 tokens, suffix 6 tokens
+[QwenMel] filters loaded [128, 201] (25728 elems)
+Tokenizer loaded: vocab_size=151705
+[ASR] tokenizer loaded
+
+========================================
+[Audio] /tmp/asr_bench13/en_long_1_16k.wav
+[Output] language English<asr_text>Zafon Brimix is a high-performance AI inference chip developed by Zafongo, featuring a proprietary tensor processing unit (architecture) that delivers up to tops of end computing.
+[Perf]   1.77s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/short_05s.wav
+[Output] language Chinese<asr_text>对。
+[Perf]   0.63s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/short_1s.wav
+[Output] language None<asr_text>对我做了介绍。
+[Perf]   0.63s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/test_de.wav
+[Output] language German<asr_text>Entschuldigung, fährt der Zug nach Berlin?
+[Perf]   0.70s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/test_en.wav
+[Output] language English<asr_text>Mister Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.
+[Perf]   1.56s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/test_en_p1.wav
+[Output] language English<asr_text>Everyone, I'm Amanda, and I'm twenty-five years old. I work as a social media manager, but today I want to share something really personal with you. I want to talk about my journey of building my personal brand as a content creator. You know, it's been quite an adventure, and I think my story might help you if you're thinking about starting something similar. So grab a cup of coffee, get comfortable, and.
+[Perf]   3.97s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/test_en_p2.wav
+[Output] language English<asr_text>Let's chat about this together. Let me take you back to about two years ago. I was sitting at my desk at work, scrolling through Instagram during my lunch break. I kept seeing these amazing posts from people who seemed to have it all figured out. They had beautiful photos, engaging stories, and thousands of followers who loved what they shared. I remember thinking, "Wow, these."
+[Perf]   4.11s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/test_es.wav
+[Output] language Spanish<asr_text>Y hoy me gustaría hacer una excursión. Pero no encuentro mi pasaporte. Ya busqué en mi chaqueta, en la habitación. No está.
+[Perf]   2.23s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/test_fr.wav
+[Output] language French<asr_text>Bonjour les amis et bienvenue dans un nouvel épisode Disney French. Aujourd'hui nous sommes dans le 11e arrondissement de Paris.
+[Perf]   1.92s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/test_ja.wav
+[Output] language Japanese<asr_text>すみません。駅はどこですか。
+[Perf]   0.94s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/test_zh.wav
+[Output] language Chinese<asr_text>对我做了介绍啊。那么我想说的是呢，大家如果对我的研究感兴趣呢，嗯。
+[Perf]   1.32s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/test_zh_18s.wav
+[Output] language Chinese<asr_text>如果说这个全国第一城市，上一次遭受的同类危机，那恐怕还得追溯到上海堡垒时期。�[ASR] 70 tokens, total 2.88s (mel 0.25 + enc 0.09 + prefill 0.26 + decode 2.28, 30.7 tok/s)
+�竟这些都是给给们惹的祸。但要说因此导致上海乃至全国人民的团结，恐怕就得是淞沪会战了。这也不是夸张。你。
+[Perf]   2.56s
+========================================
+
+========================================
+[Audio] /tmp/asr_bench13/zh_long_1_16k.wav
+[Output] language Chinese<asr_text>语音合成技术经过多年发展，已经从早期的拼接式合成，进化到如今基于深度学习的端到端模式。现代TDDT系统能够生成自然流畅、富有情感的语音，支持多种语言和方言在智能客服、有声读物、导航、播报等众多场景中得到了广泛应用。
+[Perf]   2.88s
+========================================

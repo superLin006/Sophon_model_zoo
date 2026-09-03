@@ -1,34 +1,42 @@
 #!/bin/bash
 # Moonshine streaming-small bmodel 转换脚本（支持 F32 / F16）
-# 在 TPU-MLIR Docker 容器内执行（从 Sophon_model_zoo/ 根目录）:
-#   docker run --rm \
-#     -v $(pwd)/moonshine:/workspace \
-#     -v $(pwd)/0_Toolkits:/toolkits \
-#     sophgo/tpuc_dev:latest bash /workspace/python/gen_bmodel.sh [F32|F16]
+# 在 TPU-MLIR Docker 容器内执行，/workspace = 仓库根（由 3_docker/run_docker.sh 挂载）:
+#   docker exec sophon-tpumlir-v128 bash /workspace/moonshine/python/gen_bmodel.sh [F32|F16]
+#
+# 注意：下方 MODEL_ROOT 写死 /workspace/moonshine，因此必须让 /workspace 对应仓库根。
+# 早期文档里的私有挂载（-v $(pwd)/moonshine:/workspace）与此矛盾——那样 MODEL_ROOT 会
+# 解析成 moonshine/moonshine 而不存在，必然失败。
 
 set -e
 
-# 安装 tpu_mlir（强制从本地 whl 安装，避免走网络）
-WHL=$(ls /toolkits/tpu_mlir*.whl 2>/dev/null | head -1)
-if [ -z "$WHL" ]; then
-    echo "[Error] tpu_mlir whl not found in /toolkits/"
-    exit 1
+# 使用公共镜像已安装的 TPU-MLIR；仅在工具不存在时从仓库内 wheel 补装。
+if ! command -v model_transform.py >/dev/null 2>&1 || ! command -v model_deploy.py >/dev/null 2>&1; then
+    WHL=$(find /workspace/0_Toolkits -maxdepth 1 -type f -name 'tpu_mlir*.whl' -print -quit 2>/dev/null)
+    if [ -z "$WHL" ]; then
+        echo "[Error] model_transform.py/model_deploy.py 不存在，且 /workspace/0_Toolkits 无 tpu_mlir wheel"
+        exit 1
+    fi
+    python -m pip install "$WHL" -q --no-deps
 fi
-pip install "$WHL" -q --no-deps 2>/dev/null || pip install "$WHL" -q
 
+# 从仓库根目录挂载到 /workspace 时的模型路径。
+MODEL_ROOT="/workspace/moonshine"
 MODEL_NAME="moonshine"
-ONNX_DIR="/workspace/models/onnx"
+ONNX_DIR="${MODEL_ROOT}/models/onnx"
 WORK_DIR="/tmp/moonshine_compile"
+OUTPUT_DIR="${WORK_DIR}/output"
 
 chip="bm1684x"
-quantize="${1:-F32}"   # 默认 F32，可传 F16
+quantize="${1:-F16}"   # 默认 F16（与 deploy_to_board.sh 默认一致），可传 F32
 if [ "${quantize}" != "F32" ] && [ "${quantize}" != "F16" ]; then
     echo "[Error] quantize 参数只支持 F32 或 F16，收到: ${quantize}"
     exit 1
 fi
 
-BMODEL_DIR="/workspace/models/BM1684X"
+BMODEL_DIR="${MODEL_ROOT}/models/BM1684X"
 mkdir -p "${BMODEL_DIR}" "${WORK_DIR}"
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}"
 
 # 固定 shape: 10s 音频 -> T=2000 帧 -> T_enc=500
 T=2000
@@ -60,7 +68,10 @@ model_deploy.py \
     --mlir "${MODEL_NAME}_encoder.mlir" \
     --quantize ${quantize} \
     --chip ${chip} \
-    --model "${BMODEL_DIR}/${MODEL_NAME}_encoder_${quantize}.bmodel"
+    --model "${OUTPUT_DIR}/${MODEL_NAME}_encoder_${quantize}.bmodel"
+
+mv "${OUTPUT_DIR}/${MODEL_NAME}_encoder_${quantize}.bmodel" \
+   "${BMODEL_DIR}/${MODEL_NAME}_encoder_${quantize}.bmodel"
 
 echo "[1/2] Encoder 转换完成"
 
@@ -94,7 +105,10 @@ model_deploy.py \
     --quantize ${quantize} \
     --chip ${chip} \
     --disable_layer_group \
-    --model "${BMODEL_DIR}/${MODEL_NAME}_decoder_${quantize}.bmodel"
+    --model "${OUTPUT_DIR}/${MODEL_NAME}_decoder_${quantize}.bmodel"
+
+mv "${OUTPUT_DIR}/${MODEL_NAME}_decoder_${quantize}.bmodel" \
+   "${BMODEL_DIR}/${MODEL_NAME}_decoder_${quantize}.bmodel"
 
 echo "[2/2] Decoder 转换完成"
 

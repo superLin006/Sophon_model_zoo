@@ -1,3 +1,7 @@
+# 通用导出环境（兜底模板，非精确）
+# ⚠️ 精确可复现的依赖请用**各模型根目录的 requirements.txt**：
+#      conda create -n <env名> python=3.10 -y && conda run -n <env名> python -m pip install -r <模型>/requirements.txt
+#    requirements.txt 是各模型的精确依赖入口；本文件仅作通用初始化。
 name: sophon-export
 channels:
   - pytorch

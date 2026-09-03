@@ -5,7 +5,8 @@
 #   bash compile_qwen3_small_bmodel.sh 1.7b
 #   bash compile_qwen3_small_bmodel.sh all   # 依次编译两个
 # 预计耗时: 0.6B ~30-60 min, 1.7B ~1-2 h
-# 注: docker /workspace 对应宿主机 /home/xh/itc_project/Sophon_model_zoo/
+# 注: docker /workspace 对应仓库根目录（宿主机当前会话由用户自行指定）
+# 注: 该脚本为旧流程入口，正式交付请使用 QwenLLM/compile/compile_v95e.sh 与 deploy_to_board.sh
 
 set -e
 # 脚本在 scripts/ 下，QwenLLM 根目录是上一级
@@ -32,9 +33,9 @@ compile_model() {
     echo "[INFO] 输出: ${out_dir}"
     echo "========================================================"
 
-    docker start sophon-tpumlir
+    docker start sophon-tpumlir-v128
 
-    docker exec sophon-tpumlir bash -c "
+    docker exec sophon-tpumlir-v128 bash -c "
         set -e
         echo '[docker] 固定 transformers==4.51.1...'
         pip3 install 'transformers==4.51.1' -q 2>/dev/null || true

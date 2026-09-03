@@ -37,29 +37,23 @@ cpp/
 
 ## 编译
 
-在 WSL/Linux 上用 Docker 交叉编译，不需要上板：
+在 WSL/Linux 上用统一脚本交叉编译，不需要上板：
 
 ```bash
 # 在仓库根目录执行
-docker run --rm \
-  -v $(pwd):/workspace \
-  -w /workspace/chatTTS-offical/cpp \
-  sophon-cross-build:latest \
-  bash -c "mkdir -p build && cd build && \
-           cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/aarch64.cmake .. && \
-           make -j4"
+bash chatTTS/cpp/build.sh
 ```
 
 产出：
-- `build/chattts` — 单句推理
-- `build/chattts_bench` — 70样本 benchmark
+- `chatTTS/cpp/build/chattts` — 单句推理
+- `chatTTS/cpp/build/chattts_bench` — 70 样本 benchmark
 
 ## 板卡上的模型文件
 
 运行前需将以下文件准备好（路径可通过参数指定）：
 
 ```
-/data/chatTTS-offical/models/
+/data/chattts/models/
 ├── chattts-llama_int4_1dev_1024_bm1684x.bmodel   # GPT 模型（INT4 量化）
 ├── decoder_1-768-1024_bm1684x.bmodel             # DVAE Decoder
 ├── vocos_1-100-2048_bm1684x.bmodel               # Vocos 声码器
@@ -69,7 +63,11 @@ docker run --rm \
         └── vocab.txt
 ```
 
-speaker embedding 二进制文件（float32，768维），可从 `slct_voice_240605.json` 中提取。
+ speaker embedding 二进制文件（float32，768维），可从 `slct_voice_240605.json` 中提取。
+
+参考音频克隆采用 Python 端 DVAE 编码、C++ 端 GPT prompt 注入：先用 Python 生成
+`CTTSPRM1` prompt 文件，再由 C++ 加载。这样无需在板卡 C++ 侧引入 torchaudio 或
+FSQ 依赖。
 
 ## 使用方法
 
@@ -77,11 +75,38 @@ speaker embedding 二进制文件（float32，768维），可从 `slct_voice_240
 
 ```bash
 ./chattts \
-  --model-dir /data/chatTTS-offical/models \
+  --model-dir /data/chattts/models \
   --spk-emb   /path/to/spk_emb.bin \
   --text      "你好，很高兴认识你。" \
   --output    output.wav
 ```
+
+### 参考音频音色克隆
+
+先在安装了 Python/SAIL 的环境中导出 prompt（会同时执行一次合成）：
+
+```bash
+cd python
+python3 test_clone.py \
+  --ref ../test_data/zh_short_1.wav \
+  --ref-text "参考音频的逐字转写" \
+  --prompt-out /tmp/voice_prompt.bin \
+  --output /tmp/clone.wav
+```
+
+再在 C++ 程序中加载同一个 prompt，并必须传入完全一致的参考音频转写：
+
+```bash
+./chattts \
+  --model-dir ../models \
+  --voice-prompt /tmp/voice_prompt.bin \
+  --ref-text "参考音频的逐字转写" \
+  --text "这是使用参考音色生成的新句子。" \
+  --output clone_cpp.wav
+```
+
+`--voice-prompt` 与 `--spk-emb` 不能同时使用。prompt 文件是二进制小文件，包含
+`[frames, 4]` 的 ChatTTS DVAE code；参考文本不会写入文件，调用时必须另传。
 
 完整参数：
 
@@ -91,6 +116,8 @@ speaker embedding 二进制文件（float32，768维），可从 `slct_voice_240
 | `--text` | 内置默认句 | 要合成的文本 |
 | `--output` | `output.wav` | 输出 WAV 文件路径 |
 | `--spk-emb` | （无，使用随机音色）| speaker embedding 二进制路径 |
+| `--voice-prompt` | （无） | Python `--prompt-out` 导出的 DVAE prompt 文件 |
+| `--ref-text` | （无） | 参考音频逐字转写；与 `--voice-prompt` 配套 |
 | `--speed` | `5` | 语速，1~9 |
 | `--temp` | `0.0001` | 采样温度 |
 | `--max-tokens` | `2048` | 最大生成 token 数 |
@@ -100,7 +127,7 @@ speaker embedding 二进制文件（float32，768维），可从 `slct_voice_240
 
 ```bash
 ./chattts_bench \
-  --model-dir /data/chatTTS-offical/models \
+  --model-dir /data/chattts/models \
   --spk-emb   /path/to/spk_emb.bin \
   --warmup    3
 ```

@@ -1,0 +1,7 @@
+FROM sophgo/tpuc_dev:v3.4
+
+# The v3.4 base image does not include TPU-MLIR commands.
+COPY tpu_mlir-1.28.1-py3-none-any.whl /tmp/
+RUN python3 -m pip install --no-cache-dir /tmp/tpu_mlir-1.28.1-py3-none-any.whl \
+    && python3 -m pip install --no-cache-dir onnx==1.14.1 \
+    && rm -f /tmp/tpu_mlir-1.28.1-py3-none-any.whl

@@ -16,7 +16,8 @@
 **验证**：目录齐全。
 
 ### Step 2: 配置 Conda 环境
-检查 `sophon-export` 环境存在并安装模型所需依赖（funasr/transformers/qwen_tts 等）。
+按模型根目录 `requirements.txt` 创建独立环境，宽带命令统一用 `conda run -n <env>`：
+先写 `{model}/requirements.txt`（直接依赖全部 exact 版本，参考已有模型），再 `conda create -n <env> python=<版本> -y`、`pip install -r requirements.txt`；不依赖仓库已有的其他环境。
 
 **验证**：`python -c "import torch, onnx"` 通过。
 **失败修复**：环境缺失 → conda create；包缺失 → pip install。

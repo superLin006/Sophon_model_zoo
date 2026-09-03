@@ -14,21 +14,42 @@ from transformers.cache_utils import DynamicCache
 from qwen_tts import Qwen3TTSModel
 
 
-MODEL_PATH = "/home/xh/itc_project/RK_model_zoo/models/Qwen3-TTS-12Hz-0.6B-CustomVoice"
-OUT = "/home/xh/itc_project/Sophon_model_zoo/Qwen3-TTS/models/onnx"
+# 模型权重目录：必须通过 --model-path 或环境变量 QWEN3_TTS_MODEL 提供，禁止硬编码本机路径
+MODEL_PATH = os.environ.get("QWEN3_TTS_MODEL", "")
+
+OUT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "..", "models", "onnx"))
 SEQLEN = 192          # talker prefill 最大序列长度（192 帧=15.36s，decode attention 增 50%）
 CP_PREFILL = 2        # code_predictor prefill 固定 2 token
 CP_HIST = 16          # code_predictor decode 最大历史长度（2 + 14）
 
 
 def main():
+    global MODEL_PATH, OUT
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--force", action="store_true", help="覆盖已有 ONNX，执行完整重导出")
     ap.add_argument("--dtype", default="float32")
+    ap.add_argument("--model-path", dest="model_path", default=MODEL_PATH,
+                    help="Qwen3-TTS-12Hz-0.6B 权重目录（必填，或通过环境变量 QWEN3_TTS_MODEL 提供）")
+    ap.add_argument("--out", dest="out", default=None,
+                    help="onnx 输出目录（默认 <repo>/Qwen3-TTS/models/onnx）")
     args = ap.parse_args()
+    if not args.model_path:
+        ap.error("--model-path 或环境变量 QWEN3_TTS_MODEL 不能为空（禁止硬编码本机路径）")
+    MODEL_PATH = args.model_path
+    if args.out:
+        OUT = os.path.abspath(args.out)
     dt = torch.float32 if args.dtype == "float32" else torch.bfloat16
 
     os.makedirs(OUT, exist_ok=True)
+    # onnx 按用途分子目录，避免 100 个文件平铺（talker 56 / cp 40 / embedding 3 / codec 1）
+    OUT_TALKER = os.path.join(OUT, "talker")
+    OUT_CP = os.path.join(OUT, "cp")
+    OUT_EMB = os.path.join(OUT, "embedding")
+    OUT_CODEC = os.path.join(OUT, "codec")
+    for d in (OUT_TALKER, OUT_CP, OUT_EMB, OUT_CODEC):
+        os.makedirs(d, exist_ok=True)
 
     tts = Qwen3TTSModel.from_pretrained(
         MODEL_PATH, device_map="cpu", dtype=dt,
@@ -118,7 +139,7 @@ def main():
         torch.onnx.export(
             blk,
             (torch.zeros(1, SEQLEN, H, dtype=dt), pid, mask),
-            f"{OUT}/talker_block_{i}.onnx",
+            f"{OUT_TALKER}/talker_block_{i}.onnx",
             input_names=["input_states", "position_ids", "attention_mask"],
             output_names=["hidden_states", "past_k", "past_v"],
             do_constant_folding=True, opset_version=15, dynamo=False,
@@ -131,7 +152,7 @@ def main():
             blkc,
             (torch.zeros(1, 1, H, dtype=dt), pid, mask,
              torch.zeros(1, KV, SEQLEN, D, dtype=dt), torch.zeros(1, KV, SEQLEN, D, dtype=dt)),
-            f"{OUT}/talker_block_cache_{i}.onnx",
+            f"{OUT_TALKER}/talker_block_cache_{i}.onnx",
             input_names=["input_states", "position_ids", "attention_mask", "history_k", "history_v"],
             output_names=["hidden_states", "past_k", "past_v"],
             do_constant_folding=True, opset_version=15, dynamo=False,
@@ -145,13 +166,18 @@ def main():
                 return talker.model.codec_embedding(x)
         torch.onnx.export(
             Emb().eval(), (torch.zeros(1, SEQLEN, dtype=torch.long),),
-            f"{OUT}/embedding_code.onnx",
+            f"{OUT_EMB}/embedding_code.onnx",
             input_names=["input_ids"], output_names=["input_embed"],
             do_constant_folding=True, opset_version=15, dynamo=False,
         )
         print("[talker] exported embedding_code")
 
     def export_embedding_text():
+        # text_embedding 是 151936×2048（fp32 = 1.25GB），直接 fp32 导出会触发 torch.onnx
+        # 2GiB protobuf 形状推断上限（_jit_pass_onnx_node_shape_type_inference 崩溃）。
+        # 因此先降到 bf16（0.6GB）再导出——这是经板卡验证的 workaround，_sim 版 onnx/bmodel 均正常；
+        # 精度损失经量化决策认可（相对误差 ~1e-2，TTS 可接受）。备用方案：dynamo=True 导出（未采用）。
+        # 注意：bf16 Sigmoid 在 ORT CPU 下无法运行（NO_IMPLEMENTED），属已知限制，不影响 TPU-MLIR 编译。
         talker.model.text_embedding.to(torch.bfloat16)
         talker.text_projection.to(torch.bfloat16)
         class Emb(nn.Module):
@@ -159,7 +185,7 @@ def main():
                 return talker.text_projection(talker.model.text_embedding(x))
         torch.onnx.export(
             Emb().eval(), (torch.zeros(1, SEQLEN, dtype=torch.long),),
-            f"{OUT}/embedding_text.onnx",
+            f"{OUT_EMB}/embedding_text.onnx",
             input_names=["input_ids"], output_names=["input_embed"],
             do_constant_folding=True, opset_version=15, dynamo=False,
         )
@@ -171,7 +197,7 @@ def main():
                 return talker.codec_head(x)
         torch.onnx.export(
             Head().eval(), (torch.zeros(1, 1, H, dtype=dt),),
-            f"{OUT}/codec_head.onnx",
+            f"{OUT_EMB}/codec_head.onnx",
             input_names=["hidden_states"], output_names=["logits"],
             do_constant_folding=True, opset_version=15, dynamo=False,
         )
@@ -246,7 +272,7 @@ def main():
             b = CpBlock(cp_layers[i], i, is_last).eval()
             torch.onnx.export(
                 b, (torch.zeros(1, CP_PREFILL, H, dtype=dt), pid, mask),
-                f"{OUT}/cp_block_{i}.onnx",
+                f"{OUT_CP}/cp_block_{i}.onnx",
                 input_names=["input_states", "position_ids", "attention_mask"],
                 output_names=["hidden_states", "past_k", "past_v"],
                 do_constant_folding=True, opset_version=15, dynamo=False,
@@ -260,7 +286,7 @@ def main():
                 (torch.zeros(1, 1, H, dtype=dt), pid, mask,
                  torch.zeros(1, CP_KV, CP_HIST, CP_D, dtype=dt),
                  torch.zeros(1, CP_KV, CP_HIST, CP_D, dtype=dt)),
-                f"{OUT}/cp_block_cache_{i}.onnx",
+                f"{OUT_CP}/cp_block_cache_{i}.onnx",
                 input_names=["input_states", "position_ids", "attention_mask", "history_k", "history_v"],
                 output_names=["hidden_states", "past_k", "past_v"],
                 do_constant_folding=True, opset_version=15, dynamo=False,
@@ -332,7 +358,7 @@ def main():
                         return cp.lm_head[self.gi](x)
                 torch.onnx.export(
                     Head(g).eval(), (torch.zeros(1, 1, H, dtype=dt),),
-                    f"{OUT}/cp_lm_head_{g}.onnx",
+                    f"{OUT_CP}/cp_lm_head_{g}.onnx",
                     input_names=["hidden_states"], output_names=["logits"],
                     do_constant_folding=True, opset_version=15, dynamo=False,
                 )
@@ -345,7 +371,7 @@ def main():
                         return cp.model.codec_embedding[self.ei](x)
                 torch.onnx.export(
                     Emb(e).eval(), (torch.zeros(1, 1, dtype=torch.long),),
-                    f"{OUT}/cp_embedding_{e}.onnx",
+                    f"{OUT_CP}/cp_embedding_{e}.onnx",
                     input_names=["input_ids"], output_names=["input_embed"],
                     do_constant_folding=True, opset_version=15, dynamo=False,
                 )
@@ -360,27 +386,27 @@ def main():
     else:
         rng = range(L)
     for i in rng:
-        if pathlib.Path(f"{OUT}/talker_block_{i}.onnx").exists() and \
-           pathlib.Path(f"{OUT}/talker_block_cache_{i}.onnx").exists():
+        if not args.force and pathlib.Path(f"{OUT_TALKER}/talker_block_{i}.onnx").exists() and \
+           pathlib.Path(f"{OUT_TALKER}/talker_block_cache_{i}.onnx").exists():
             print(f"[talker] skip block {i} (exists)")
             continue
         export_block(i)
         print(f"[talker] done block {i}", flush=True)
-    if not pathlib.Path(f"{OUT}/embedding_code.onnx").exists():
+    if args.force or not pathlib.Path(f"{OUT_EMB}/embedding_code.onnx").exists():
         export_embedding_code()
-    if not pathlib.Path(f"{OUT}/embedding_text.onnx").exists():
+    if args.force or not pathlib.Path(f"{OUT_EMB}/embedding_text.onnx").exists():
         export_embedding_text()
-    if not pathlib.Path(f"{OUT}/codec_head.onnx").exists():
+    if args.force or not pathlib.Path(f"{OUT_EMB}/codec_head.onnx").exists():
         export_codec_head()
         print("[talker] exported embeddings/head", flush=True)
     if not os.environ.get('TALKER_ONLY'):
         for i in range(CP_L):
-            if pathlib.Path(f"{OUT}/cp_block_{i}.onnx").exists() and \
-               pathlib.Path(f"{OUT}/cp_block_cache_{i}.onnx").exists():
+            if not args.force and pathlib.Path(f"{OUT_CP}/cp_block_{i}.onnx").exists() and \
+               pathlib.Path(f"{OUT_CP}/cp_block_cache_{i}.onnx").exists():
                 print(f"[cp] skip block {i} (exists)")
                 continue
             export_cp_block(i)
-        if not pathlib.Path(f"{OUT}/cp_lm_head_0.onnx").exists() or not pathlib.Path(f"{OUT}/cp_embedding_0.onnx").exists():
+        if args.force or not pathlib.Path(f"{OUT_CP}/cp_lm_head_0.onnx").exists() or not pathlib.Path(f"{OUT_CP}/cp_embedding_0.onnx").exists():
             export_cp_heads()
 
 

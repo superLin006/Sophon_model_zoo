@@ -6,8 +6,10 @@ models/onnx/
 # C++ 编译产物（build.sh 交叉编译生成）
 cpp/build/
 
-# 测试音频/日志不入库（batch 输入与 README 入库）
+# 测试合成音频不入库（体积大，batch 输入清单与 README 入库）
 test_outputs/**/*.wav
-test_outputs/**/*.log
+# A/B 验收日志入库：ab_20260817/ 下 4 份是 README 中 54/54 与加权 RTF 1.900/1.818 的原始出处。
+# 此处反向覆盖 root .gitignore 的 *.log（更深层的 .gitignore 优先级更高）。
+!test_outputs/**/*.log
 # W4F16 独立实验组件与编译日志
 models/BM1684X/w4f16_experiment/

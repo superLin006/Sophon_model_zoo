@@ -33,7 +33,13 @@ done
 case "$QUANTIZE" in F16|F32) ;; *) printf 'invalid quantize: %s\n' "$QUANTIZE" >&2; exit 2;; esac
 
 SHAPES=$(python3 "$ROOT/python/tpumlir_args.py" --manifest "$MANIFEST" --network "$NETWORK" --onnx "$ONNX")
-MLIR="${OUTPUT%.*}.mlir"
+
+# 中间产物（mlir/npz/prototxt/layer_group_config）统一落容器临时目录，结束自动清理，
+# 避免 model_transform/model_deploy 把 *.hpz/*.prototxt 等散落到调用者的当前目录。
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/zipformer_gen.XXXXXX")"
+trap 'rm -rf "$WORK_DIR"' EXIT
+cd "$WORK_DIR"
+MLIR="$(basename "${OUTPUT%.*}").mlir"
 TRANSFORM=(model_transform.py --model_name "zipformer_${NETWORK}" --model_def "$ONNX" --input_shapes "$SHAPES" --mlir "$MLIR")
 DEPLOY=(model_deploy.py --mlir "$MLIR" --quantize "$QUANTIZE" --chip bm1684x --model "$OUTPUT")
 if [[ "$NETWORK" == encoder || ( "$NETWORK" == decoder && "$DECODER_DISABLE_LAYER_GROUP" == 1 ) ]]; then

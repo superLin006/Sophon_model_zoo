@@ -1,8 +1,24 @@
-torch>=2.8.0
-transformers>=4.57.0
-torchaudio>=2.8.0
-huggingface_hub>=0.34.0
-safetensors>=0.5.0
-numpy>=1.26.0
-loguru>=0.7.0
-flash-attn>=2.8.0
+# Eureka-Audio — ONNX 导出环境（实测版本，源：conda sophon-eureka-audio）
+# 新建环境：
+#   conda create -n sophon-eureka-audio python=3.10 -y
+#   conda run -n sophon-eureka-audio python -m pip install -r requirements.txt
+# 说明：
+#   - torch 走 --extra-index-url cu128（Eureka 权重为 fp32 1.7B+whisper encoder，GPU 导出更省时）
+#   - eureka_infer/ 是本仓库内代码（音频指令分类推理），随仓库使用，无需 pip 安装
+#   - flash-attn 不需要（导出用的是手写展开 forward，见 compile/export_*.py），因此本清单不含
+#   - openai-whisper 用于加载 WhisperLargeV3 权重出 encoder onnx
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.8.0+cu128
+torchaudio==2.8.0+cu128
+torchvision==0.23.0+cu128
+transformers==5.9.0
+openai-whisper==20250625
+safetensors==0.7.0
+onnx==1.21.0
+onnxruntime==1.23.2
+onnxsim==0.6.4
+huggingface_hub==1.16.1
+numpy==2.2.6
+soundfile==0.13.1
+loguru==0.7.3
+tqdm==4.67.3

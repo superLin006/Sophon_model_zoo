@@ -15,6 +15,7 @@ Whisper Base ONNX 精度验证
 import sys
 import json
 import numpy as np
+import soundfile as sf
 from pathlib import Path
 
 ROOT       = Path(__file__).parent.parent.parent  # whisper/
@@ -51,7 +52,11 @@ def run_one(audio_path: str, language: str = "zh") -> dict:
     print(f"\n[Run] {audio_path}  lang={language}")
 
     # ── Mel 特征（与 test_pytorch.py 完全一致）────────────────────────────
-    audio = whisper.load_audio(audio_path)
+    audio, sample_rate = sf.read(audio_path, dtype="float32")
+    if audio.ndim == 2:
+        audio = audio.mean(axis=1)
+    if sample_rate != 16000:
+        raise ValueError(f"测试 WAV 必须是 16kHz，实际为 {sample_rate}Hz")
     audio = whisper.pad_or_trim(audio)
     mel = whisper.log_mel_spectrogram(audio).unsqueeze(0).numpy()  # [1, 80, 3000]
 

@@ -1,0 +1,108 @@
+[ASR] 18 tokens, total 0.55s (mel 0.09 + enc 0.08 + prefill 0.10 + decode 0.28, 65.0 tok/s)
+[ASR] 18 tokens, total 0.58s (mel 0.11 + enc 0.08 + prefill 0.10 + decode 0.28, 64.6 tok/s)
+[ASR] 18 tokens, total 0.55s (mel 0.09 + enc 0.08 + prefill 0.10 + decode 0.28, 65.3 tok/s)
+[ASR] 24 tokens, total 0.69s (mel 0.12 + enc 0.08 + prefill 0.10 + decode 0.38, 64.0 tok/s)
+[ASR] 21 tokens, total 0.61s (mel 0.10 + enc 0.08 + prefill 0.10 + decode 0.32, 65.0 tok/s)
+[ASR] 13 tokens, total 0.46s (mel 0.06 + enc 0.08 + prefill 0.10 + decode 0.21, 63.2 tok/s)
+[ASR] 17 tokens, total 0.55s (mel 0.10 + enc 0.08 + prefill 0.10 + decode 0.26, 65.0 tok/s)
+[ASR] 18 tokens, total 0.54s (mel 0.07 + enc 0.09 + prefill 0.10 + decode 0.28, 64.1 tok/s)
+[ASR] 18 tokens, total 0.58s (mel 0.12 + enc 0.08 + prefill 0.10 + decode 0.28, 65.0 tok/s)
+[ASR] 17 tokens, total 0.54s (mel 0.09 + enc 0.08 + prefill 0.10 + decode 0.26, 64.8 tok/s)
+[ASR] 34 tokens, total 0.87s (mel 0.16 + enc 0.08 + prefill 0.10 + decode 0.52, 65.2 tok/s)
+[ASR] 34 tokens, total 0.86s (mel 0.15 + enc 0.08 + prefill 0.10 + decode 0.53, 64.8 tok/s)
+[ASR] 26 tokens, total 0.73s (mel 0.14 + enc 0.08 + prefill 0.10 + decode 0.40, 64.9 tok/s)
+[ASR] 5 tokens, total 0.29s (mel 0.02 + enc 0.09 + prefill 0.10 + decode 0.08, 64.4 tok/s)
+open usercpu.so, init user_cpu_init 
+[Qwen3] loaded /tmp/qwen3_asr_merged_w4g64.bmodel
+[Qwen3] Layers=28 MAX_INPUT=512 SEQLEN=512 kv_per_token=1024 hidden=1024
+[ASR] devmem after LLM: used=1058/10240 MB
+[Enc] loaded (net=qwen3_asr_encoder)
+[ASR] devmem after enc: used=1058/10240 MB
+[ASR] prefix 9 tokens, suffix 6 tokens
+[QwenMel] filters loaded [128, 201] (25728 elems)
+Tokenizer loaded: vocab_size=151705
+[ASR] tokenizer loaded
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/baseline_zh.wav
+[Output] language Chinese<asr_text>今天天气不错，我们一起去公园散步吧，顺便买杯咖啡。
+[Perf]   0.56s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/en_serena.wav
+[Output] language English<asr_text>Edge Computing brings inference directly to the device, reducing latency and preserving privacy.
+[Perf]   0.58s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/en_vivian.wav
+[Output] language English<asr_text>Please confirm the delivery date for the second batch of orders by Friday afternoon.
+[Perf]   0.55s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/len_long2.wav
+[Output] language Chinese<asr_text>随着人工智能技术的快速发展，语音合成系统在自然度和表现力方面，取得了了显著。
+[Perf]   0.69s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/new_english.wav
+[Output] language English<asr_text>The quick brown fox jumps over the lazy dog, while the sun sets behind the mountains.
+[Perf]   0.61s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/spk_aiden.wav
+[Output] language Chinese<asr_text>明天下午三点开会，请大家提前准备好材料。
+[Perf]   0.46s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/spk_ryan_zh.wav
+[Output] language Chinese<asr_text>人工智能正在改变各行各业。从医疗到教育，都有广泛应用。
+[Perf]   0.55s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/spk_serena.wav
+[Output] language Chinese<asr_text>这款芯片支持八位整数量化，功耗只有十二瓦。
+[Perf]   0.54s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/spk_unclefu.wav
+[Output] language Chinese<asr_text>请把这份合同仔细看一遍。重点确认交付时间和付款方式。
+[Perf]   0.58s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/spk_vivian.wav
+[Output] language Chinese<asr_text>我们公司在深圳和上海都设有研发中心，员工超过两千人。
+[Perf]   0.54s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/type_mixed.wav
+[Output] language Chinese<asr_text>今天读了《Quilson TTS》的文档，发现STK LEN参数影响性能。一百二十八G可以合成十秒音频。
+[Perf]   0.87s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/type_number.wav
+[Output] language Chinese<asr_text>数据统计显示：，1234050样本中，百分之87.6的准确率，误差小于百分之0.5。
+[Perf]   0.86s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/type_punct.wav
+[Output] language Chinese<asr_text>注意，请勿在维护期间重启节点。否则，可能丢失缓存。见第三节。谢谢配合。
+[Perf]   0.73s
+========================================
+
+========================================
+[Audio] /tmp/asr_ab_16k/w8/zh_short.wav
+[Output] language Chinese<asr_text>你好。
+[Perf]   0.29s
+========================================

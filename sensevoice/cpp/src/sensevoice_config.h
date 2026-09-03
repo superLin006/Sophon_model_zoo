@@ -1,6 +1,6 @@
 /* SenseVoice Configuration
  *
- * Configuration structures for SenseVoice MTK inference.
+ * Configuration structures for SenseVoice BM1684X inference.
  */
 
 #pragma once

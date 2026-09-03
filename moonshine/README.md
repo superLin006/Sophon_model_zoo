@@ -3,7 +3,7 @@
 [Moonshine](https://github.com/usefulsensors/moonshine) 轻量流式语音识别(ASR)移植到 Sophon BM1684X。
 本仓库使用 **streaming-small** 变体(10 层 decoder / 10 层 encoder,hidden 512/620,vocab 32768),精度 F32 / F16,纯 BMRuntime C++ 推理,无第三方推理框架依赖。
 
-> 移植流程遵循 `../.claude/subagents/README.md` 四阶段(initializer → operator-analyst → python-converter → cpp-implementer),中间产物与验证记录见 `.context/`。
+> 移植流程遵循 `../.claude/subagents/README.md` 五阶段(initializer → operator-analyst → python-converter → cpp-implementer → performance-optimizer),中间产物与验证记录见 `.context/`。
 
 ## 特性
 
@@ -16,35 +16,34 @@
 
 ### 环境依赖
 
-- 开发机:conda `sophon-whisper`(Python 3.10、PyTorch 2.11、transformers ≥5.14、onnx、onnxsim)
+- 开发机：独立 conda 环境（Python 3.10、PyTorch 2.11、transformers、onnx、onnxsim），从仓库根目录执行 `conda create -n sophon-moonshine python=3.10 -y`、`conda run -n sophon-moonshine python -m pip install --upgrade pip`、`conda run -n sophon-moonshine python -m pip install -r moonshine/requirements.txt`
 - HF 权重: `models/moonshine-streaming-small/`(UsefulSensors/moonshine-streaming-small,如缺失先下载)
-- Docker: `sophgo/tpuc_dev:latest`(TPU-MLIR v1.28.1)、`sophon-cross-build`(aarch64 交叉编译)
+- Docker: `sophon/tpuc_dev:v3.4-tpumlir-1.28.1`(TPU-MLIR v1.28.1,容器名 `sophon-tpumlir-v128`)、`sophon-cross-build`(aarch64 交叉编译)
 
 ### Step 1:导出 ONNX
 
 ```bash
-cd moonshine
-conda activate sophon-whisper
-python python/export_onnx.py        # 导出 encoder + decoder,含内置自检(decoder 27 步 token 100% 一致)
+conda run -n sophon-moonshine --no-capture-output python moonshine/python/export_onnx.py
+# 导出 encoder + decoder，含内置自检（decoder 27 步 token 100% 一致）
 ```
 
-产物在 `models/onnx/`(encoder/decoder sim onnx)。导出同时生成 `models/log_k.txt`(特征提取资产,已在仓库中)。
+产物在 `models/onnx/`（保留供编译和测试使用的 encoder/decoder sim ONNX）。导出同时生成 `models/log_k.txt` 与 `models/log_k.npy`，它们是特征提取和测试所需的资产。
 
 ### Step 2:编译 bmodel
 
+统一走公共转换容器(仓库根挂载在 `/workspace`,与其余模型一致):
+
 ```bash
 # 仓库根目录执行;F32 先,F16 后
-docker run --rm \
-  -v $(pwd)/moonshine:/workspace \
-  -v $(pwd)/0_Toolkits:/toolkits \
-  sophgo/tpuc_dev:latest bash /workspace/python/gen_bmodel.sh F32
-docker run --rm \
-  -v $(pwd)/moonshine:/workspace \
-  -v $(pwd)/0_Toolkits:/toolkits \
-  sophgo/tpuc_dev:latest bash /workspace/python/gen_bmodel.sh F16
+docker exec sophon-tpumlir-v128 bash /workspace/moonshine/python/gen_bmodel.sh F32
+docker exec sophon-tpumlir-v128 bash /workspace/moonshine/python/gen_bmodel.sh F16
 ```
 
 产物在 `models/BM1684X/`。**decoder 必须 `--disable_layer_group`**(23 输入复杂图,脚本已内置)。
+
+> `gen_bmodel.sh` 把 `MODEL_ROOT` 写死为 `/workspace/moonshine`,因此**要求 `/workspace` 对应仓库根**(即 `run_docker.sh` 的默认挂载)。早期文档里的私有挂载 `-v $(pwd)/moonshine:/workspace` 与此矛盾——那样 `MODEL_ROOT` 会解析成 `moonshine/moonshine` 而不存在,必然失败;脚本头部注释已同步修正。
+>
+> 中间产物已自带隔离:`WORK_DIR=/tmp/moonshine_compile`,encoder 与 decoder 各自 `cd` 进独立子目录后再调用 `model_transform.py` / `model_deploy.py`,不会把 mlir/npz 散落到 `models/` 或仓库根(符合 `.claude/standards/models_directory_standard.md` §3.1)。
 
 ### Step 3:交叉编译 C++
 
@@ -53,14 +52,30 @@ bash moonshine/cpp/build.sh
 # 产物: moonshine/cpp/build/moonshine_bm1684
 ```
 
-### Step 4:上板运行
+### Step 4:部署并上板运行
 
 ```bash
-# 板卡上部署目录需含: moonshine_bm1684、models/(4 个 bmodel + tokens.txt)
-./moonshine_bm1684 models/ test_data/0.wav F32
-./moonshine_bm1684 models/ test_data/0.wav F16
+# 部署（默认 F16；上传后逐文件 md5 校验，并跑一次 smoke test）
+BOARD_IP=<board_ip> bash moonshine/deploy_to_board.sh F16 --test
+# 换成 F32 档
+BOARD_IP=<board_ip> bash moonshine/deploy_to_board.sh F32 --test
+```
+
+可用环境变量:`BOARD_USER`、`BOARD_PORT`、`BOARD_DIR`(默认 `/data/moonshine`)、`BINARY`、`TEST_AUDIO`(默认 `test_data/0.wav`),以及两个路径变量——`BMODEL_DIR`(默认 `models/BM1684X`,取 bmodel)与 `ASSET_DIR`(默认 `models`,取 `tokens.txt`)。
+
+> bmodel 与 `tokens.txt` 在仓库内分处两层(`models/BM1684X/` 与 `models/`),因此脚本用两个变量分别定位;上传到板端时两者一起**平铺**进 `${BOARD_DIR}/models/`,以匹配 C++ 的 `model_dir` 参数。
+>
+> **一次部署只上传一个精度档**(encoder + decoder 共 2 个 bmodel + `tokens.txt`)。要让板上同时具备 F32 与 F16 共 4 个 bmodel,需按精度各部署一次(同一 `BOARD_DIR` 即可,文件名带精度后缀不会互相覆盖)。
+
+板端手动运行:
+
+```bash
+cd /data/moonshine
+./moonshine_bm1684 models/ test_data/test.wav F16
 # 参数: <model_dir> <audio.wav> [F32|F16]
 ```
+
+> 部署脚本把测试音频上传后**重命名为 `test.wav`**(源文件是 `test_data/0.wav`)。要跑其它样本,用 `TEST_AUDIO=moonshine/test_data/8k.wav` 部署,或自行 scp 后按实际文件名传参。
 
 更多 C++ 细节见 [cpp/README.md](cpp/README.md)。
 

@@ -65,7 +65,7 @@ VOCAB_SIZE         = lm_head.weight.shape[0]
 
 print(f'Layers={NUM_LAYERS}  Hidden={HIDDEN_SIZE}  Heads={NUM_ATTENTION_HEADS}  KV={NUM_KV_HEADS}  HeadDim={HEAD_DIM}  Vocab={VOCAB_SIZE}  Seq={SEQ_LENGTH}')
 
-folder = './tmp/onnx'
+folder = '../models/onnx'
 os.makedirs(folder, exist_ok=True)
 os.makedirs(folder + '/block', exist_ok=True)
 os.makedirs(folder + '/cache', exist_ok=True)

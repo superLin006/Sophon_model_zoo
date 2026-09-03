@@ -1,0 +1,9 @@
+# QwenLLM — 本地无 python 导出依赖
+# QwenLLM 的转换（HF safetensors → bmodel）全部在 TPU-MLIR Docker 容器内完成
+# （scripts/compile_qwen3_*.sh 进入 sophon-tpumlir-v128，容器内 llm_convert.py），
+# 无需本地 python env。
+#
+# 历史 download_qwen3_*.sh 若需运行，统一使用 conda 环境 sophon-qwenllm；这些脚本
+# 不属于当前 v95e 交付流程，所需 ModelScope 依赖需另行安装。
+#
+# 若需本地跑 llm-sdk 的推理/评估，按 llm-sdk 自身的依赖安装即可，这里不锁版本。

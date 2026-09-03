@@ -1,4 +1,6 @@
 # SDK、工具包、第三方库（体积大，不上传，用 .gitkeep 保留目录结构）
+# 例外：1_third_party/tokenizers-cpp/ 的 aarch64 预编译库与头文件入库，
+#       反向规则写在下方 *.a / *.so 段之后（gitignore 后出现的规则优先）。
 0_Toolkits/*
 !0_Toolkits/.gitkeep
 1_third_party/**/*
@@ -14,18 +16,32 @@
 *.npz
 *.safetensors
 # QwenLLM：HF 原始权重 + bmodel 产物（本地生成，不入库）
+# 注：以下三个原始 Qwen3 目录当前已不在本机（交付只剩 v95 dispatch 系列），
+#     规则保留作为防御性守卫——若重新下载原始权重，避免误提交。
 QwenLLM/Qwen3-4B-AWQ/
 QwenLLM/Qwen3-0.6B/
 QwenLLM/Qwen3-1.7B/
 QwenLLM/models/
+# QwenLLM：dispatch 定制权重整包（7×1.2G，含顶层散落的 tokenizer 文件）
+QwenLLM/Qwen3-0.6B-dispatch-v95*/
+QwenLLM/added_tokens.json
+QwenLLM/chat_template.jinja
+QwenLLM/tokenizer.json
+QwenLLM/tokenizer_config.json
+QwenLLM/vocab.json
 
-# 测试数据（用 .gitkeep 保留目录结构）
+# 仓库根层 test_data/（当前不存在该目录，规则作为守卫保留）
+# 注意：含斜杠的模式锚定到本文件所在目录，因此 test_data/* 管不到 <model>/test_data/。
+#       各模型的小体积验收音频是**入库**的（35 个 wav / 13MB，分布在 Qwen3-ASR、
+#       Eureka-Audio、moonshine、sensevoice、whisper、zipformer），大体积与可再生成的测试数据不入库。
 test_data/*
 !test_data/.gitkeep
 datasets/
 audios/
-models/*
-!models/**/.gitkeep
+# **/models/** 递归忽略（必须带 **，覆盖 <模型>/models/<深度子目录>/）
+# 注意：目录级排除后反选不生效，.gitkeep/README 若需新增请 git add -f
+**/models/**
+!**/models/**/.gitkeep
 
 # Python
 __pycache__/
@@ -38,20 +54,46 @@ build/
 # LLM-TPU：sophgo 官方第三方源码，本地克隆即可，不入库
 QwenLLM/LLM-TPU/
 
-# LLM-TPU 编译产物（二进制静态/动态库，从 sophgo 官方获取）
+# 预编译二进制库（LLM-TPU 编译产物、1_third_party 各库）默认不入库
 *.a
 *.so
 *.so.*
+
+# 例外：tokenizers-cpp 的 aarch64 预编译库与头文件入库。
+# 理由：QwenLLM / Qwen3-ASR 交叉编译的硬依赖，上游无稳定的预编译下载地址，
+#       缺失则新机器无法编译这两个模型。必须写在上面 *.a 之后才能生效。
+!1_third_party/tokenizers-cpp/aarch64-linux/*.a
+!1_third_party/tokenizers-cpp/include/*.h
 
 # Conda 环境
 env/
 
 # 日志和临时文件
+# 注：本条全局排除会被 HY-MT / Qwen3-TTS / Qwen3-ASR 各自 .gitignore 中的
+#     `!...*.log` 反向覆盖（更深层 .gitignore 优先）。板上原始验收日志必须入库——
+#     它们是 PERF_SUMMARY.md 各项数据的唯一出处，排除后文档会引用归档里不存在的文件。
+#     编译/构建日志仍应排除（各模型 compile/ 与 cpp/build*/ 下）。
 *.log
 *.tmp
 *.cache
+# 以下两条锚定在仓库根层，管不到各模型的 outputs/ 与 test_outputs/
 output/
 results/
+
+# TPU-MLIR 转换中间产物（可随时重新生成，一律不入库）
+*.mlir
+*.prototxt
+*ref_files.json
+tensor_location.json
+*.modify
+*.layer_group_config.json
+*.layer_group_cache.json
+*.profile
+*.whl
+# 各模型 compile/ 下的临时目录（onnx 产物与重编译中间文件）
+Eureka-Audio/compile/tmp/
+Qwen3-ASR/compile/tmp/
+Qwen3-TTS/compile/tmp/
 
 # IDE
 .vscode/
@@ -64,3 +106,14 @@ Thumbs.db
 # Qwen3-ASR：HF 标准权重目录（重命名版）+ llm_convert 编译目录（bmodel 已忽略）
 Qwen3-ASR/models_llm_std/
 Qwen3-ASR/qwen3_asr_std*/
+
+# Zipformer：构建资产集中到仓库内 zipformer/assets/（checkpoint/onnx/icefall/官方测试音频，
+# 212M 本地下载/生成，不入库；用 .gitkeep 保留目录）
+zipformer/assets/
+!zipformer/assets/.gitkeep
+
+# 模型测试对比输出与校准/编译临时产物
+sensevoice/python/test/outputs/
+vits-melo-tts-zh_en/python/test/outputs/
+whisper/calib_data/
+whisper/compile/

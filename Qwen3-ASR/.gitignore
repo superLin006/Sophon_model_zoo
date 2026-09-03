@@ -24,4 +24,7 @@ compile/*.prototxt
 compile/w4f16_llm_*/
 models_llm_std_f16/
 test_data/bench*/
-test_outputs/
+# 板上原始验收日志入库（PERF_SUMMARY 中 RTF 中位数 0.128 / 0.161 的原始出处）。
+# 不要改回 `test_outputs/` 整目录排除——父目录一旦被排除，就无法再用 ! 反向选回其中的文件。
+# 该目录下只有 .log，反向选回不会误纳入其他产物。
+!test_outputs/**/*.log

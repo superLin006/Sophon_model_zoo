@@ -176,7 +176,8 @@ struct GPTEngine::Impl {
 
     std::pair<std::vector<float>, std::vector<uint16_t>>
     prefill(const std::vector<int>& tokens, int spk_idx,
-            const std::vector<uint16_t>& spk_emb_f16);
+            const std::vector<uint16_t>& spk_emb_f16,
+            const std::vector<int>& prompt_codes, int prompt_frames);
 
     std::pair<std::vector<float>, std::vector<uint16_t>>
     decode(const std::vector<int>& vq_codes);
@@ -322,9 +323,18 @@ void GPTEngine::Impl::init(const std::string& bmodel_path, int tpu_id,
 
 std::pair<std::vector<float>, std::vector<uint16_t>>
 GPTEngine::Impl::prefill(const std::vector<int>& tokens, int spk_idx,
-                          const std::vector<uint16_t>& spk_emb_f16) {
+                          const std::vector<uint16_t>& spk_emb_f16,
+                          const std::vector<int>& prompt_codes,
+                          int prompt_frames) {
     int tok_len = (int)tokens.size();
     fprintf(stderr, "[GPT] prefill: %d tokens\n", tok_len);
+
+    if (tok_len <= 0 || tok_len >= SEQLEN)
+        throw std::runtime_error("[GPT] prefill token length leaves no decode slot");
+    if (prompt_frames < 0 ||
+        prompt_codes.size() != (size_t)prompt_frames * NUM_VQ ||
+        prompt_frames > tok_len)
+        throw std::runtime_error("[GPT] invalid voice prompt code buffer");
 
     // ── embedding_text ────────────────────────────────────────────────────────
     // in[0]: [1, SEQLEN] int32 — pad with 0
@@ -356,6 +366,35 @@ GPTEngine::Impl::prefill(const std::vector<int>& tokens, int spk_idx,
                     HIDDEN_SIZE * sizeof(uint16_t));
         bm_memcpy_s2d(hdl, pf_em_out_dm, hidden_host.data());
         fprintf(stderr, "[GPT] speaker embedding injected at pos %d\n", spk_idx);
+    }
+
+    // Reference-audio prompt: embedding_code_cache produces one hidden row
+    // for each [num_vq] code frame. Replace the trailing placeholder rows in
+    // the text embedding output, matching the Python/SAIL implementation.
+    if (prompt_frames > 0) {
+        const int prompt_start = tok_len - prompt_frames;
+        const size_t hidden_bytes = (size_t)HIDDEN_SIZE * sizeof(uint16_t);
+        std::vector<int32_t> code_ids(NUM_VQ);
+        for (int t = 0; t < prompt_frames; ++t) {
+            for (int v = 0; v < NUM_VQ; ++v)
+                code_ids[v] = prompt_codes[(size_t)t * NUM_VQ + v];
+            bm_memcpy_s2d(hdl, pf_em_in_dm, code_ids.data());
+
+            std::vector<bm_tensor_t> code_in(1), code_out(1);
+            bmrt_tensor_with_device(&code_in[0], pf_em_in_dm,
+                                     net_embed_code->input_dtypes[0],
+                                     net_embed_code->stages[0].input_shapes[0]);
+            bmrt_tensor_with_device(&code_out[0], dec_ec_out_dm,
+                                     net_embed_code->output_dtypes[0],
+                                     net_embed_code->stages[0].output_shapes[0]);
+            bm_launch(hdl, rt, net_embed_code, code_in, code_out);
+            bm_memcpy_d2d_byte(
+                hdl, pf_em_out_dm,
+                (size_t)(prompt_start + t) * hidden_bytes,
+                dec_ec_out_dm, 0, hidden_bytes);
+        }
+        fprintf(stderr, "[GPT] voice prompt injected: %d frames at pos %d\n",
+                prompt_frames, prompt_start);
     }
 
     // ── build position_id and attention_mask ──────────────────────────────────
@@ -446,6 +485,8 @@ GPTEngine::Impl::prefill(const std::vector<int>& tokens, int spk_idx,
 std::pair<std::vector<float>, std::vector<uint16_t>>
 GPTEngine::Impl::decode(const std::vector<int>& vq_codes) {
     int step = decode_step;
+    if (text_tok_len + step >= SEQLEN)
+        throw std::runtime_error("[GPT] decode would exceed SEQLEN");
     decode_step++;
 
     // ── embedding_code_cache ──────────────────────────────────────────────────
@@ -622,7 +663,9 @@ GPTResult GPTEngine::generate(const std::vector<int>&      input_ids,
                                int                          top_k,
                                float                        repetition_penalty,
                                int                          max_new_token,
-                               int                          min_new_token) {
+                               int                          min_new_token,
+                               const std::vector<int>&      prompt_codes,
+                               int                          prompt_frames) {
     auto& im = *impl_;
     im.rng.seed(42);
 
@@ -634,7 +677,8 @@ GPTResult GPTEngine::generate(const std::vector<int>&      input_ids,
     ss.generated.resize(ss.NV); ss.curr_codes.resize(ss.NV); ss.rng = &im.rng;
 
     // Prefill
-    auto [logits0, hidden0] = im.prefill(input_ids, spk_emb_idx, spk_emb);
+    auto [logits0, hidden0] = im.prefill(
+        input_ids, spk_emb_idx, spk_emb, prompt_codes, prompt_frames);
     bool done = ss.sample(logits0, 0);
     result.hiddens.push_back(hidden0);
     result.codes.push_back(ss.curr_codes);
@@ -642,7 +686,8 @@ GPTResult GPTEngine::generate(const std::vector<int>&      input_ids,
             ss.curr_codes[0], ss.curr_codes[1], ss.curr_codes[2], ss.curr_codes[3], done?1:0);
 
     // Decode loop
-    for (int step = 1; step < max_new_token && !done; ++step) {
+    const int decode_capacity = im.SEQLEN - static_cast<int>(input_ids.size());
+    for (int step = 1; step < max_new_token && step < decode_capacity && !done; ++step) {
         if (im.decode_step >= im.SEQLEN) break;
         auto [logits_n, hidden_n] = im.decode(ss.curr_codes);
         done = ss.sample(logits_n, step);
@@ -660,9 +705,12 @@ GPTResult GPTEngine::generate(const std::vector<int>&      input_ids,
 
 GPTStepResult GPTEngine::prefill_step(const std::vector<int>&      input_ids,
                                        const std::vector<uint16_t>& spk_emb,
-                                       int                          spk_emb_idx) {
+                                       int                          spk_emb_idx,
+                                       const std::vector<int>&      prompt_codes,
+                                       int                          prompt_frames) {
     impl_->rng.seed(42);
-    auto [logits, hidden] = impl_->prefill(input_ids, spk_emb_idx, spk_emb);
+    auto [logits, hidden] = impl_->prefill(
+        input_ids, spk_emb_idx, spk_emb, prompt_codes, prompt_frames);
     return {std::move(logits), std::move(hidden)};
 }
 

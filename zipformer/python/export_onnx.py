@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Export the MTK-derived Zipformer protocol to three ONNX graphs.
+"""Export the streaming (103→24) Zipformer protocol to three ONNX graphs.
 
-The icefall checkout and MTK model definition are external by design.  This
-script copies neither into the repository and loads them through explicit CLI
-paths.  The MTK protocol is intentionally not the official icefall/32 export.
+The vendored streaming model definition lives in this repository
+(zipformer/python/streaming_zipformer.py); only the icefall checkout path is
+external and injected through the CLI.  This is intentionally not the official
+icefall/32 export protocol.
 """
 from __future__ import annotations
 
@@ -75,9 +76,9 @@ def _safe_relative_position_matmul(self, x_proj, pos, attention_dim, num_heads,
     return attn_output, attn_output_weights, cached_key, cached_val
 
 
-def install_safe_position_matmul(mtk):
-    """Install the BM1684X-safe expression before constructing EncoderMTK."""
-    mtk.RelPositionMultiheadAttentionMTK.streaming_multi_head_attention_forward_mtk = (
+def install_safe_position_matmul(streaming):
+    """Install the BM1684X-safe expression before constructing EncoderStreaming."""
+    streaming.RelPositionMultiheadAttentionStreaming.streaming_multi_head_attention_forward_streaming = (
         _safe_relative_position_matmul
     )
 
@@ -103,34 +104,38 @@ def _install_icefall_stubs() -> None:
     sys.modules.update({"icefall": icefall, "icefall.utils": utils, "icefall.dist": dist})
 
 
-def load_mtk_module(icefall_root: Path, mtk_python_dir: Path):
-    """Import MTK code while preserving its relative icefall layout contract."""
+def load_streaming_module(icefall_root: Path, streaming_model_file: Path):
+    """Import the vendored streaming (103→24) model definition.
+
+    The model source lives inside this repository (zipformer/python/streaming_zipformer.py);
+    only the icefall checkout path is external, injected via CLI.
+    """
     egs = icefall_root / "egs/librispeech/ASR/pruned_transducer_stateless7_streaming"
     if not (egs / "zipformer.py").is_file():
         raise SystemExit(f"icefall source is not the expected checkout: {egs}")
     _install_icefall_stubs()
     sys.path[:0] = [str(egs), str(icefall_root)]
-    spec = importlib.util.spec_from_file_location("zipformer_mtk_model_export", mtk_python_dir / "zipformer_mtk_model.py")
+    spec = importlib.util.spec_from_file_location("zipformer_streaming_model_export", streaming_model_file)
     if spec is None or spec.loader is None:
-        raise SystemExit("cannot import MTK zipformer model")
+        raise SystemExit("cannot import vendored streaming zipformer model")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
 
-def audit_and_build(mtk, checkpoint: Path):
-    """Audit each model prefix before allowing the MTK builder's legacy load."""
+def audit_and_build(streaming, checkpoint: Path):
+    """Audit each model prefix before allowing the streaming builder's legacy load."""
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)["model"]
-    # Build the unwrapped models exactly as MTK build_mtk_models does.
-    encoder = mtk.Zipformer(num_features=80, output_downsampling_factor=2,
+    # Build the unwrapped models exactly as build_streaming_models does.
+    encoder = streaming.Zipformer(num_features=80, output_downsampling_factor=2,
         encoder_dims=(256,)*5, attention_dim=(192,)*5, encoder_unmasked_dims=(192,)*5,
         zipformer_downsampling_factors=(1,2,4,8,2), nhead=(4,)*5,
         feedforward_dim=(768,)*5, num_encoder_layers=(2,)*5,
         cnn_module_kernels=(31,)*5, pos_dim=4, num_left_chunks=4,
         short_chunk_size=50, decode_chunk_size=32)
-    decoder = mtk.Decoder(vocab_size=6254, decoder_dim=512, blank_id=0, context_size=2)
-    joiner = mtk.Joiner(encoder_dim=256, decoder_dim=512, joiner_dim=512, vocab_size=6254)
+    decoder = streaming.Decoder(vocab_size=6254, decoder_dim=512, blank_id=0, context_size=2)
+    joiner = streaming.Joiner(encoder_dim=256, decoder_dim=512, joiner_dim=512, vocab_size=6254)
     models = {"encoder": encoder, "decoder": decoder, "joiner": joiner}
     reports = {}
     for prefix, model in models.items():
@@ -144,17 +149,17 @@ def audit_and_build(mtk, checkpoint: Path):
         if bad_missing or unexpected:
             raise RuntimeError("checkpoint audit failed: " + json.dumps(reports, indent=2))
         print(f"{prefix}: missing={missing} unexpected={unexpected}")
-    install_safe_position_matmul(mtk)
-    enc = mtk.EncoderMTK(encoder).eval()
+    install_safe_position_matmul(streaming)
+    enc = streaming.EncoderStreaming(encoder).eval()
     # Sophon supports Gather: retain the original token-ID Decoder graph, including
     # embedding -> conv -> relu.  Do not use DecoderNPU (CPU embedding workaround).
     dec = DecoderSophon(decoder).eval()
-    joi = mtk.JoinerMTK(joiner).eval()
+    joi = streaming.JoinerStreaming(joiner).eval()
     return enc, dec, joi, reports
 
 
 class SophonBatchedStateEncoder(torch.nn.Module):
-    """Expose MTK states behind a singleton external batch axis.
+    """Expose streaming states behind a singleton external batch axis.
 
     The leading 2 inside each state is the number of layers, not runtime batch.
     """
@@ -173,7 +178,7 @@ class SophonBatchedStateEncoder(torch.nn.Module):
 def wrap_encoder(encoder, state_envelope):
     if state_envelope == "sophon":
         return SophonBatchedStateEncoder(encoder).eval()
-    if state_envelope == "mtk":
+    if state_envelope == "streaming":
         return encoder
     raise ValueError(f"unknown state envelope: {state_envelope}")
 
@@ -203,7 +208,7 @@ def export_graph(model, args, path: Path, input_names, output_names):
             do_constant_folding=True, dynamo=False)
     import onnx
     graph = onnx.load(str(path)); onnx.checker.check_model(graph)
-    # Some old exporters omit this attribute; MTK expects explicit Conv shapes.
+    # Some old exporters omit this attribute; the streaming definition expects explicit Conv shapes.
     for node in graph.graph.node:
         if node.op_type == "Conv" and not any(a.name == "kernel_shape" for a in node.attribute):
             # Initializers are looked up by name and are always present for these Conv nodes.
@@ -218,23 +223,24 @@ def export_graph(model, args, path: Path, input_names, output_names):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--icefall-root", "--source-root", dest="icefall_root", required=True)
-    p.add_argument("--mtk-python-dir", required=True)
+    p.add_argument("--streaming-model", default=str(Path(__file__).resolve().parent / "streaming_zipformer.py"),
+                   help="vendored streaming (103→24) model definition inside this repo")
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--output-dir", "--output", dest="output_dir", required=True)
-    p.add_argument("--state-envelope", choices=("sophon", "mtk"), default="sophon",
+    p.add_argument("--state-envelope", choices=("sophon", "streaming"), default="sophon",
                    help="encoder state IO envelope (default: explicit Sophon batch-1 envelope)")
     a = p.parse_args()
     ck, out = Path(a.checkpoint), Path(a.output_dir)
     if not ck.is_file(): raise SystemExit(f"checkpoint not found: {ck}")
-    mtk = load_mtk_module(Path(a.icefall_root), Path(a.mtk_python_dir))
-    raw_enc, dec, joi, report = audit_and_build(mtk, ck)
+    streaming = load_streaming_module(Path(a.icefall_root), Path(a.streaming_model))
+    raw_enc, dec, joi, report = audit_and_build(streaming, ck)
     enc = wrap_encoder(raw_enc, a.state_envelope)
     states = encoder_dummy_inputs(raw_enc, a.state_envelope)
     enc_names = ["x"] + [f"{kind}_{i}" for kind in STATE_NAMES for i in range(5)]
     enc_out = ["encoder_out"] + [f"new_{kind}_{i}" for kind in STATE_NAMES for i in range(5)]
-    export_graph(enc, tuple(states), out / "encoder_mtk_103_24_256.onnx", enc_names, enc_out)
+    export_graph(enc, tuple(states), out / "encoder_103_24_256.onnx", enc_names, enc_out)
     export_graph(dec, (torch.tensor([[0, 0]], dtype=torch.int64),), out / "decoder_sophon_tokens.onnx", ["token_ids"], ["decoder_out"])
-    export_graph(joi, (torch.randn(1, 256), torch.randn(1, 512)), out / "joiner_mtk.onnx", ["enc_out", "dec_out"], ["logit"])
+    export_graph(joi, (torch.randn(1, 256), torch.randn(1, 512)), out / "joiner_streaming.onnx", ["enc_out", "dec_out"], ["logit"])
     (out / "load_audit.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 
 if __name__ == "__main__": main()

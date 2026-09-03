@@ -1,14 +1,14 @@
 """
-Whisper BM1684 ONNX 导出脚本
-目标芯片: BM1684 (FP32)
+Whisper BM1684X ONNX 导出脚本
+目标芯片: BM1684X (FP32)
 转换链路: PyTorch → ONNX → (Docker) → bmodel
 
 拆分方式:
   - encoder:   mel [1, 80, 3000] → audio_features [1, 1500, n_state]
-  - decoder:   单步自回归，含 KV Cache 输入输出（与 MTK 方案一致）
+  - decoder:   单步自回归，含 KV Cache 输入输出（与参考方案一致）
 
-与 MTK 版本的关键区别（Sophon 算子更强，更多逻辑放进模型）:
-  MTK C++ 侧做:  token embedding lookup、position embedding lookup、attention mask 生成
+与参考实现的关键区别（Sophon 算子更强，更多逻辑放进模型）:
+  参考实现 C++ 侧做:  token embedding lookup、position embedding lookup、attention mask 生成
   Sophon 模型内: 全部放进来（Gather/Where/Concat 均支持）
 
 Decoder 输入:
@@ -34,6 +34,7 @@ Decoder 输出:
 
 import argparse
 import os
+import shutil
 import numpy as np
 import torch
 import torch.nn as nn
@@ -55,7 +56,7 @@ class EncoderWrapper(nn.Module):
         self.encoder = encoder
 
     def forward(self, mel):
-        # BM1684 不支持 Erf，手动展开 AudioEncoder.forward 中的 F.gelu 为 tanh 近似
+        # BM1684X 不支持 Erf，手动展开 AudioEncoder.forward 中的 F.gelu 为 tanh 近似
         enc = self.encoder
         x = F.gelu(enc.conv1(mel), approximate='tanh')
         x = F.gelu(enc.conv2(x), approximate='tanh')
@@ -100,17 +101,17 @@ def export_encoder(model, output_path: str):
 
 
 # ============================================================
-# Decoder（单步，含完整 KV Cache 管理，与 MTK 方案对齐）
+# Decoder（单步，含完整 KV Cache 管理，与参考方案对齐）
 # ============================================================
 
 class DecoderWrapper(nn.Module):
     """
-    单步 decoder，Sophon 版本将 MTK 在 C++ 侧做的三件事移入模型：
+    单步 decoder，Sophon 版本将参考实现在 C++ 侧做的三件事移入模型：
       1. token embedding lookup（Gather）
       2. position embedding lookup（Gather，按 cache_len 索引）
       3. attention mask 生成（Where + 广播）
 
-    KV Cache 策略（与 MTK 完全一致）：
+    KV Cache 策略（与参考实现完全一致）：
       - past_self_k/v: [1, PADDING_SIZE, n_state]，固定形状，C++ 侧管理写入
       - 本步只输出 new_self_k/v [1, 1, n_state]，C++ 按 cache_len 写入对应位置
       - cross_k/v: 首步计算，后续透传（C++ 侧复用）
@@ -142,7 +143,7 @@ class DecoderWrapper(nn.Module):
         # 1. Token embedding（Gather，Sophon 支持）
         x = dec.token_embedding(token)   # [1, 1, n_state]
 
-        # 2. Position embedding（C++ 侧按步切片后传入，与 MTK 一致）
+        # 2. Position embedding（C++ 侧按步切片后传入，与参考实现一致）
         x = x + pos_emb
         x = x.to(audio_features.dtype)
 
@@ -320,6 +321,7 @@ def verify_and_simplify(onnx_path: str):
                   all_tensors_to_one_file=True, location=data_name,
                   size_threshold=1024, convert_attribute=False)
         print(f"  ✅ 已保存 -> {sim_path}（权重在 {data_name}）")
+        shutil.rmtree(raw_dir)
         return sim_path
 
     print(f"  简化中 (onnxsim)...")
@@ -330,6 +332,7 @@ def verify_and_simplify(onnx_path: str):
         onnx.save(model_sim, sim_path)
         sim_size = os.path.getsize(sim_path) / 1024 / 1024
         print(f"  ✅ 简化完成 -> {sim_path} ({sim_size:.1f}MB)")
+        shutil.rmtree(raw_dir)
         return sim_path
     else:
         print(f"  ⚠️  简化失败，使用原始 ONNX")
@@ -402,27 +405,30 @@ def export_assets(model, model_name: str, asset_dir: str):
 # ============================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Whisper BM1684 ONNX 导出")
+    parser = argparse.ArgumentParser(description="Whisper BM1684X ONNX 导出")
     parser.add_argument("--model", default="base",
                         help="whisper 模型名，如 base / small / large-v3-turbo")
+    parser.add_argument("--checkpoint", default=None,
+                        help="本地 Whisper checkpoint 路径，指定后不下载官方模型")
     parser.add_argument("--output_dir", default="../models/onnx")
-    parser.add_argument("--asset_dir", default="../models/BM1684X",
+    parser.add_argument("--asset_dir", default="../models/BM1684XX",
                         help="C++ 推理资产(mel滤波器/pos_emb/vocab)输出目录")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
     print(f"\n{'='*60}")
-    print(f"  Whisper BM1684 ONNX 导出")
-    print(f"  模型: whisper-{args.model}  精度: FP32  芯片: BM1684")
+    print(f"  Whisper BM1684X ONNX 导出")
+    print(f"  模型: whisper-{args.model}  精度: FP32  芯片: BM1684X")
     print(f"{'='*60}")
 
     print(f"\n[加载模型] whisper-{args.model} ...")
     # 强制 CPU：大模型(turbo)默认会上 GPU，导致 ONNX 导出时输入(CPU)与权重(cuda)类型不匹配
-    model = whisper.load_model(args.model, device="cpu")
+    model_ref = args.checkpoint if args.checkpoint else args.model
+    model = whisper.load_model(model_ref, device="cpu")
     model.eval()
 
-    # BM1684 不支持 Erf，将所有 nn.GELU 改为 tanh 近似
+    # BM1684X 不支持 Erf，将所有 nn.GELU 改为 tanh 近似
     for m in model.modules():
         if isinstance(m, nn.GELU):
             m.approximate = 'tanh'

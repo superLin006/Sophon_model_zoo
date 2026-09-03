@@ -2,8 +2,15 @@ FROM ubuntu:20.04
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        cmake \
+        wget curl \
         g++-aarch64-linux-gnu \
         gcc-aarch64-linux-gnu \
         make \
+        python3 \
     && rm -rf /var/lib/apt/lists/*
+
+# 安装 cmake 3.28（ubuntu:20.04 自带的 3.16 版本太旧）
+RUN wget -q https://github.com/Kitware/CMake/releases/download/v3.28.0/cmake-3.28.0-linux-x86_64.sh \
+      -O /tmp/cmake.sh && \
+    bash /tmp/cmake.sh --skip-license --prefix=/usr/local && \
+    rm /tmp/cmake.sh

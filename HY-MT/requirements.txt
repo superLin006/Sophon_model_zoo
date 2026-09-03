@@ -1,0 +1,18 @@
+# HY-MT — 本地 baseline / 探针环境（建议版本，需自建）
+# 新建环境（一律用 conda run，不要 conda activate + 裸 pip）：
+#   conda create -n sophon-hy-mt python=3.10 -y
+#   conda run -n sophon-hy-mt python -m pip install --upgrade pip
+#   conda run -n sophon-hy-mt python -m pip install -r requirements.txt
+# 说明：
+#   - 环境名统一为 sophon-hy-mt（与仓库其余模型的 sophon-* 命名一致）；
+#     历史文档写作 hy-mt-sophon，已废弃
+#   - 本 env 仅用于 python/infer_native.py（原生 baseline）与 compile/compare_block0.py（探针对照），
+#     两者都需要 CUDA GPU（下方 torch 为 cu124 构建）；无 GPU 不影响 bmodel 编译与板卡验证
+#   - 实际 bmodel 转换全部在 Docker（sophon-tpumlir-v128，TPU-MLIR 1.28.1）内用
+#     llm_convert.py 完成，需要先打 compile/patch_tpumlir_hymt.py 补丁，不需要本地重装 torch
+#   - transformers 锁 4.56.1（HY-MT1.5-1.8B 官方权重要求的版本）
+torch==2.6.0
+transformers==4.56.1
+safetensors==0.5.3
+numpy==1.26.4
+tqdm==4.68.2

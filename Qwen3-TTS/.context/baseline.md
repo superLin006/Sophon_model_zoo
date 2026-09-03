@@ -3,7 +3,7 @@
 ## 模型信息
 
 - 模型: Qwen3-TTS-12Hz-0.6B-CustomVoice（自回归 LLM 型 TTS）
-- 模型路径: `/home/xh/itc_project/RK_model_zoo/models/Qwen3-TTS-12Hz-0.6B-CustomVoice`
+- 模型路径: `$QWEN3_TTS_MODEL`（环境变量指定，不写入仓库）
 - 主权重: `model.safetensors`（1.8GB，含 talker + code_predictor + 文本/码本嵌入）
 - codec: `speech_tokenizer/model.safetensors`（682MB，12Hz 编解码器）
 - 类型: custom_voice（9 种预定义音色，0.6B 不支持 instruct）

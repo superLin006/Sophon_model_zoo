@@ -8,10 +8,12 @@
 
 | 工具 | 说明 |
 |------|------|
-| `sophgo/tpuc_dev:v3.2` | TPU-MLIR Docker，用于编译 bmodel |
+| 公共 TPU-MLIR 容器 | 用于编译 bmodel（容器名默认为 `sophon-tpumlir-v128`） |
 | `sophon-cross-build` | 交叉编译 Docker，用于编译 C++ 推理程序 |
 | `0_Toolkits/soc-sdk-sp4` | Sophon SOC SDK（头文件 + 库） |
 | `0_Toolkits/tpu_mlir*.whl` | TPU-MLIR Python 包 |
+
+- onnx 处理（make_tpu_model / make_split_models / test_onnx）：独立 conda 环境；从仓库根目录执行 `conda create -n sophon-vits-melo-tts-zh-en python=3.10 -y`、`conda run -n sophon-vits-melo-tts-zh-en python -m pip install --upgrade pip`、`conda run -n sophon-vits-melo-tts-zh-en python -m pip install -r vits-melo-tts-zh_en/requirements.txt`；公共 TPU-MLIR 容器负责 bmodel 编译。
 
 所有命令从**仓库根目录** `Sophon_model_zoo/` 执行。
 
@@ -22,11 +24,18 @@
 ```
 python/
 ├── make_tpu_model.py    # Step 1: 生成 model_tpu.onnx（去除 TPU 不支持的算子）
-├── make_split_models.py # Step 2: 拆分出 part_a_encoder.onnx + part_c_flow_decoder.onnx
+├── make_split_models.py # Step 2: 拆分出 part_a_encoder.onnx + part_c1_flow.onnx + part_c2_decoder.onnx
 ├── gen_bmodel.sh        # Step 3: 编译 bmodel（在 TPU-MLIR Docker 内执行）
-├── export_onnx.py       # 仅用于从 PyTorch 重新导出 model.onnx（通常不需要）
-└── fix_onnx.py          # 历史遗留，已被 make_tpu_model.py 取代，不再使用
+├── export_onnx.py       # 来源说明：原始 ONNX 来自上游 sherpa-onnx/MeloTTS，见下节
 ```
+
+> **原始 `model.onnx` 来源**：本方案**不**在本仓库内做 PyTorch→ONNX 导出。
+> `models/onnx/vits-melo-tts-zh_en/` 下的 onnx 由上游 **sherpa-onnx 对
+> [myshell-ai/MeloTTS](https://github.com/myshell-ai/MeloTTS) 的导出**（单女声 zh_en 模型，
+> 见该目录 `README.md` / `LICENSE`）。当前目录中保留的是 **Step 2 拆分后的最终产物**
+> （`part_a_encoder.onnx` + `part_c1_flow.onnx` + `part_c2_decoder.onnx`）；`model.onnx` 单体
+> 与 `model_tpu.onnx` 中间产物未保留。如需完整复现，先从上游导出单体 ONNX 放入
+> `models/onnx/vits-melo-tts-zh_en/model.onnx`，再按 Step 1→2→3 执行。
 
 ---
 
@@ -37,45 +46,37 @@ python/
 去除原始 `model.onnx` 中 TPU 不支持的算子（NonZero、RandomNormalLike），固化 sid=1。
 
 ```bash
-docker run --rm \
-    -v $(pwd)/vits-melo-tts-zh_en:/workspace \
-    sophgo/tpuc_dev:v3.2 \
-    python3 /workspace/python/make_tpu_model.py
+conda run -n sophon-vits-melo-tts-zh-en --no-capture-output python vits-melo-tts-zh_en/python/make_tpu_model.py
 ```
 
-输出：`models/onnx/vits-melo-tts-zh_en/model_tpu.onnx`
+输出：`vits-melo-tts-zh_en/models/onnx/vits-melo-tts-zh_en/model_tpu.onnx`
 
 ### Step 2：拆分子图
 
-将 `model_tpu.onnx` 拆成两个静态 shape 的子图：
+将 `model_tpu.onnx` 拆成三个静态 shape 子图：
 - **Part A**（enc_p + DP）：输入 tokens/tones，输出 dp_w、h、x_mask
-- **Part C**（Flow + Decoder）：输入 z_p[1,192,256]，输出 audio[1,1,131072]
+- **Part C1**（Flow）：输入 z_p、y_mask，输出 flow 结果
+- **Part C2**（Decoder）：输入 flow 结果，输出 audio
 
 ```bash
-docker run --rm \
-    -v $(pwd)/vits-melo-tts-zh_en:/workspace \
-    sophgo/tpuc_dev:v3.2 \
-    python3 /workspace/python/make_split_models.py
+conda run -n sophon-vits-melo-tts-zh-en --no-capture-output python vits-melo-tts-zh_en/python/make_split_models.py
 ```
 
 输出：
-- `models/onnx/vits-melo-tts-zh_en/part_a_encoder.onnx`
-- `models/onnx/vits-melo-tts-zh_en/part_c_flow_decoder.onnx`
+- `vits-melo-tts-zh_en/models/onnx/vits-melo-tts-zh_en/part_a_encoder.onnx`
+- `vits-melo-tts-zh_en/models/onnx/vits-melo-tts-zh_en/part_c1_flow.onnx`
+- `vits-melo-tts-zh_en/models/onnx/vits-melo-tts-zh_en/part_c2_decoder.onnx`
 
 ### Step 3：编译 bmodel
 
 ```bash
-docker run --rm \
-    -v $(pwd):/repo \
-    sophgo/tpuc_dev:v3.2 \
-    bash /repo/vits-melo-tts-zh_en/python/gen_bmodel.sh F32
+docker exec sophon-tpumlir-v128 bash /workspace/vits-melo-tts-zh_en/python/gen_bmodel.sh F16
 ```
 
-将 `F32` 替换为 `F16` 可生成半精度版本。
-
 输出：
-- `models/BM1684X/vits_part_a_F32.bmodel`
-- `models/BM1684X/vits_part_c_F32.bmodel`
+- `vits-melo-tts-zh_en/models/BM1684X/vits_part_a_F16.bmodel`
+- `vits-melo-tts-zh_en/models/BM1684X/vits_part_c1_F16.bmodel`
+- `vits-melo-tts-zh_en/models/BM1684X/vits_part_c2_F16.bmodel`
 
 ---
 
@@ -98,6 +99,6 @@ docker run --rm \
 
 ## 注意事项
 
-- bmodel 的 T_mel 固定为 256（最多生成约 3s 音频），推理时 z_p 会 pad 到 256，输出截取实际有效帧
+- bmodel 的 T_mel 固定为 512（最多生成约 6s 音频），推理时 z_p 会 pad 到 512，输出截取实际有效帧
 - BM1684X SDK 无 `BM_INT64`，Part A 的 token/tone 输入需在 C++ 侧 cast 为 int32 再上传
 - `matmul_ht` 中操作 Part A 输出的 h 时，行步长必须用 `L_MAX=128`，而非 `seq_len`（详见知识库）

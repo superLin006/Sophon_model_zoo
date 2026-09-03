@@ -4,7 +4,7 @@
 
 ChatTTS模型导出需要依赖[ChatTTS huggingface仓库](https://huggingface.co/2Noise/ChatTTS)。
 
-**注意：** 
+**注意：**
 
 - 编译模型需要在x86主机完成。
 
@@ -12,7 +12,7 @@ ChatTTS模型导出需要依赖[ChatTTS huggingface仓库](https://huggingface.c
 
 ### 2.1 TPU-MLIR环境搭建
 
-模型编译前需要安装TPU-MLIR，具体可参考[TPU-MLIR环境搭建](../../../docs/Environment_Install_Guide.md#1-tpu-mlir环境搭建)。安装好后需在TPU-MLIR环境中进入例程目录。使用TPU-MLIR将onnx模型编译为BModel。
+模型编译前需要安装TPU-MLIR，具体可参考[TPU-MLIR环境搭建](../../TUTORIAL.md#1-tpu-mlir环境搭建)。安装好后需在TPU-MLIR环境中进入例程目录。使用TPU-MLIR将onnx模型编译为BModel。
 
 ### 2.2 获取onnx
 

@@ -26,20 +26,6 @@
 
 namespace fs = std::filesystem;
 
-// ---- UTF-8 流式解码（累积到无替换字符为止再输出）----
-
-static bool has_replacement_char(const std::string& s)
-{
-    // U+FFFD 的 UTF-8 编码为 EF BF BD
-    for (size_t i = 0; i + 2 < s.size(); i++) {
-        if ((unsigned char)s[i]     == 0xEF &&
-            (unsigned char)s[i + 1] == 0xBF &&
-            (unsigned char)s[i + 2] == 0xBD)
-            return true;
-    }
-    return false;
-}
-
 // ---- 读取文件内容为字符串 ----
 
 static std::string read_file(const std::string& path)
@@ -51,7 +37,7 @@ static std::string read_file(const std::string& path)
     return {std::istreambuf_iterator<char>(ifs), {}};
 }
 
-// ---- 生成完整回复（打印流式 token，返回最终字符串）----
+// ---- 生成完整回复（打印 token，返回最终字符串）----
 
 static std::string generate(QwenEngine& engine,
                              tokenizers::Tokenizer& tok,
@@ -60,12 +46,11 @@ static std::string generate(QwenEngine& engine,
                              double* out_prefill_ms = nullptr,
                              double* out_tps = nullptr)
 {
-    auto ids = tok.Encode(prompt, /*add_special_tokens=*/false);
+    // 该 tokenizers-cpp 的 Encode 只接受一参（不加额外 special token）；
+    // ChatML 特殊 token(<|im_start|> 等)已由 build_prompt 显式拼入 prompt，无需重复加。
+    auto ids = tok.Encode(prompt);
 
     using clk = std::chrono::steady_clock;
-    std::string full_text;
-    std::string word_buf;
-
     // prefill
     auto t0    = clk::now();
     int  token = engine.forward_first(ids);
@@ -78,30 +63,22 @@ static std::string generate(QwenEngine& engine,
 
     int tok_count = 0;
     auto td0 = clk::now();
+    std::vector<int32_t> output_ids;
 
     while (token != EOS && engine.token_length < engine.SEQLEN - 1
            && tok_count < max_new_tokens)
     {
-        std::string piece = tok.IdToToken(token);
-        word_buf += piece;
-
-        // 积累到没有替换字符再输出（UTF-8 多字节）
-        if (!has_replacement_char(word_buf)) {
-            std::cout << word_buf << std::flush;
-            full_text += word_buf;
-            word_buf.clear();
-        }
-
+        output_ids.push_back(token);
         token = engine.forward_next();
         tok_count++;
     }
-    if (!word_buf.empty()) {
-        std::cout << word_buf << std::flush;
-        full_text += word_buf;
-    }
-    std::cout << "\n";
 
     auto td1 = clk::now();
+    const std::string decoded = tok.Decode(output_ids);
+    std::cout << decoded << std::flush;
+    const std::string full_text = decoded;
+    std::cout << "\n";
+
     double decode_ms = std::chrono::duration<double, std::milli>(td1 - td0).count();
     if (out_tps && tok_count > 0) {
         *out_tps = tok_count / (decode_ms / 1000.0);

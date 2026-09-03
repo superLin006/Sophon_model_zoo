@@ -46,7 +46,9 @@ public:
                        int                           top_k,
                        float                         repetition_penalty,
                        int                           max_new_token = 2048,
-                       int                           min_new_token = 0);
+                       int                           min_new_token = 0,
+                       const std::vector<int>&       prompt_codes = {},
+                       int                           prompt_frames = 0);
 
     // ── Step-by-step API (streaming) ─────────────────────────────────────────
     // Call prefill_step() once, then decode_step() in a loop.
@@ -55,7 +57,9 @@ public:
     // Resets internal decode state (decode_step counter, text_tok_len).
     GPTStepResult prefill_step(const std::vector<int>&      input_ids,
                                const std::vector<uint16_t>& spk_emb,
-                               int                          spk_emb_idx);
+                               int                          spk_emb_idx,
+                               const std::vector<int>&      prompt_codes = {},
+                               int                          prompt_frames = 0);
 
     // Run one decode step for the given vq_codes.
     // Returns logits + hidden for this step.

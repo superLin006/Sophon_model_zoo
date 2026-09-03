@@ -39,7 +39,7 @@ _DIMS = (128, 64, 32, 16, 64)
 
 
 def _external_shape(shape):
-    """Add the real batch-1 axis outside the MTK layer/cache dimensions."""
+    """Add the real batch-1 axis outside the streaming layer/cache dimensions."""
     return (1,) + tuple(shape)
 
 
@@ -85,8 +85,8 @@ def build_manifest():
         "state_layout": {
             "envelope": "sophon_external_batch1",
             "external_batch": 1,
-            "inner_semantics": "MTK stack layer axis remains the leading dimension 2; it is not batch",
-            "unwrap": "state.squeeze(0) before EncoderMTK; state.unsqueeze(0) after EncoderMTK",
+            "inner_semantics": "streaming stack layer axis remains the leading dimension 2; it is not batch",
+            "unwrap": "state.squeeze(0) before EncoderStreaming; state.unsqueeze(0) after EncoderStreaming",
         },
         "networks": {
             "encoder": {"inputs": enc_inputs, "outputs": enc_outputs},

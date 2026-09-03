@@ -33,5 +33,10 @@ int main(int argc, char* argv[]) {
     std::string result = whisper.run(audio_file, language, callback);
     std::cout << std::endl;
 
+    if (result.empty()) {
+        std::cerr << "[ERROR] Recognition failed (no output)." << std::endl;
+        return -1;
+    }
+
     return 0;
 }

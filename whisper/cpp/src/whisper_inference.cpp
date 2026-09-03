@@ -8,6 +8,86 @@
 #include <iomanip>
 #include <algorithm>
 
+// When built as part of sherpa-onnx (SHERPA_ONNX_SOPHON_WHISPER=1),
+// audio_utils.cpp is NOT compiled (it depends on fftw3 for mel extraction
+// which the framework handles externally). We inline the small helpers that
+// whisper_inference needs regardless of audio-path.
+#ifdef SHERPA_ONNX_SOPHON_WHISPER
+
+static int read_mel_filters(const char* filename, float* data, int max_lines) {
+    FILE* file = fopen(filename, "r");
+    if (!file) { std::cerr << "[ERROR] Cannot open mel filters: " << filename << "\n"; return -1; }
+    int n = 0;
+    while (n < max_lines && fscanf(file, "%f", &data[n]) == 1) n++;
+    fclose(file);
+    if (n != max_lines) {
+        std::cerr << "[ERROR] mel filters: expected " << max_lines << " got " << n << "\n";
+        return -1;
+    }
+    return 0;
+}
+
+static int read_vocab(const char* filename, VocabEntry* vocab, int vocab_num) {
+    FILE* fp = fopen(filename, "r");
+    if (!fp) { std::cerr << "[ERROR] Cannot open vocab: " << filename << "\n"; return -1; }
+    char line[512]; int count = 0;
+    while (fgets(line, sizeof(line), fp) && count < vocab_num) {
+        char* sp = strchr(line, ' ');
+        if (sp) {
+            *sp = '\0';
+            vocab[count].index = atoi(line);
+            vocab[count].token = std::string(sp + 1);
+            if (!vocab[count].token.empty() && vocab[count].token.back() == '\n')
+                vocab[count].token.pop_back();
+            count++;
+        }
+    }
+    fclose(fp);
+    if (count != vocab_num) {
+        std::cerr << "[ERROR] vocab: expected " << vocab_num << " got " << count << "\n";
+        return -1;
+    }
+    return 0;
+}
+
+static void replace_substr(std::string& str, const std::string& from, const std::string& to) {
+    if (from.empty()) return;
+    size_t pos = 0;
+    while ((pos = str.find(from, pos)) != std::string::npos) {
+        str.replace(pos, from.length(), to);
+        pos += to.length();
+    }
+}
+
+static int32_t get_char_index(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+static std::string base64_decode(const std::string& s) {
+    if (s.empty()) return "";
+    std::string out; out.reserve(s.size() / 4 * 3);
+    int32_t i = 0;
+    while (i < (int32_t)s.size()) {
+        if (s[i] == '=') return " ";
+        int32_t b0 = (get_char_index(s[i]) << 2) | ((get_char_index(s[i+1]) & 0x30) >> 4);
+        out.push_back((char)b0);
+        if (i+2 < (int32_t)s.size() && s[i+2] != '=') {
+            out.push_back((char)(((get_char_index(s[i+1]) & 0x0f) << 4) | ((get_char_index(s[i+2]) & 0x3c) >> 2)));
+            if (i+3 < (int32_t)s.size() && s[i+3] != '=')
+                out.push_back((char)(((get_char_index(s[i+2]) & 0x03) << 6) | get_char_index(s[i+3])));
+        }
+        i += 4;
+    }
+    return out;
+}
+
+#endif // SHERPA_ONNX_SOPHON_WHISPER
+
 #define LOG(msg)   std::cout << "[INFO] " << msg << std::endl
 #define LOGE(msg)  std::cerr << "[ERROR] " << msg << std::endl
 #define LOGD(msg)  if (debug_mode_) { std::cout << "[DEBUG] " << msg << std::endl; }
@@ -140,10 +220,11 @@ bool WhisperInference::load_encoder(const std::string& path) {
     if (!bmrt_load_bmodel(encoder_rt_, path.c_str())) {
         LOGE("Load encoder bmodel failed: " << path); return false;
     }
-    // sp4 API: bmrt_get_network_names(rt, &names)
+    // sp4 API: bmrt_get_network_names 返回内部数组，用户需自行 free
     const char** names = nullptr;
     bmrt_get_network_names(encoder_rt_, &names);
     encoder_info_ = bmrt_get_network_info(encoder_rt_, names[0]);
+    free(names);
     LOG("Encoder loaded: " << path);
     return true;
 }
@@ -156,14 +237,63 @@ bool WhisperInference::load_decoder(const std::string& path) {
     const char** names = nullptr;
     bmrt_get_network_names(decoder_rt_, &names);
     decoder_info_ = bmrt_get_network_info(decoder_rt_, names[0]);
+    free(names);
     LOG("Decoder loaded: " << path);
     return true;
 }
 
 // ============================================================
-// run
+// runFromMel — accept pre-computed mel from sherpa-onnx
 // ============================================================
 
+std::string WhisperInference::runFromMel(const float* mel_data, int n_mels,
+                                         int n_frames, const char* language,
+                                         TokenCallback callback) {
+    if (!initialized_) { LOGE("Not initialized"); return ""; }
+
+    // Validate dimensions against what the loaded bmodel expects.
+    if (n_mels != n_mels_) {
+        LOGE("runFromMel: n_mels mismatch: got " << n_mels << " expected " << n_mels_);
+        return "";
+    }
+
+    // The encoder expects exactly 3000 frames ([1, n_mels, 3000]).
+    // sherpa-onnx already pads/truncates via WhisperTag, but we guard here too.
+    const int expected_frames = 3000;
+    std::vector<float> mel(n_mels_ * expected_frames, 0.0f);
+    int copy_frames = std::min(n_frames, expected_frames);
+    std::memcpy(mel.data(), mel_data,
+                (size_t)n_mels_ * copy_frames * sizeof(float));
+
+    std::vector<float> audio_features;
+    auto t0 = std::chrono::high_resolution_clock::now();
+    if (!run_encoder(mel, audio_features)) { LOGE("encoder failed"); return ""; }
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    int lang_token = WHISPER_LANG_EN;
+    if (language && std::string(language) == "zh") lang_token = WHISPER_LANG_ZH;
+
+    std::vector<int> tokens;
+    if (!run_decoder(audio_features, lang_token, tokens, callback)) {
+        LOGE("decoder failed"); return "";
+    }
+    auto t2 = std::chrono::high_resolution_clock::now();
+
+    auto enc_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    auto dec_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+    LOG("runFromMel: encoder=" << enc_ms << "ms  decoder=" << dec_ms
+        << "ms  tokens=" << tokens.size());
+
+    return decode_tokens(tokens);
+}
+
+// ============================================================
+// run  (WAV file path version — requires audio_utils / fftw3)
+// Not compiled when SHERPA_ONNX_SOPHON_WHISPER=1 (sherpa-onnx integration)
+// because mel extraction is handled by the framework before runFromMel().
+// ============================================================
+
+#ifndef SHERPA_ONNX_SOPHON_WHISPER
 std::string WhisperInference::run(const char* audio_file, const char* language,
                                   TokenCallback callback) {
     if (!initialized_) { LOGE("Not initialized"); return ""; }
@@ -211,6 +341,7 @@ std::string WhisperInference::run(const char* audio_file, const char* language,
     LOG("Result: " << text);
     return text;
 }
+#endif // SHERPA_ONNX_SOPHON_WHISPER
 
 // ============================================================
 // Encoder inference
@@ -255,7 +386,7 @@ bool WhisperInference::run_encoder(const std::vector<float>& mel,
 }
 
 // ============================================================
-// Decoder inference（与 MTK 逻辑完全一致）
+// Decoder inference（与参考实现逻辑完全一致）
 // ============================================================
 
 void WhisperInference::reset_kv_cache() {
@@ -278,7 +409,7 @@ void WhisperInference::get_position_embedding(int pos, float* out) {
 
 void WhisperInference::create_self_attn_mask(int cache_len, float* out) {
     // [1, 1, 1, padding_size_+1]：有效位=0，无效位=-1e9
-    // 与 MTK create_self_attn_mask 完全一致
+    // 与参考实现 create_self_attn_mask 完全一致
     int len = padding_size_ + 1;
     std::fill(out, out + len, -1e9f);
     for (int i = 0; i < cache_len; i++) out[i] = 0.f;

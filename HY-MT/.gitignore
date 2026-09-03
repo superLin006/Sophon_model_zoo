@@ -6,7 +6,10 @@ cpp/build*/
 *.mlir
 *.npz
 
-# 测试生成物：日志/音频不入库，分析 md 与脚本入库
-outputs/**/*.log
+# 测试生成物：合成音频与 baseline 不入库，分析 md 与回归脚本入库
 outputs/**/*.wav
 outputs/baseline/
+# 板上原始验收日志入库：它们是 PERF_SUMMARY 中 61/61 回归与 decode 稳定性数据的唯一出处，
+# 分析 md 会引用具体日志文件名，只入库分析而不入库日志会留下死引用。
+# 此处反向覆盖 root .gitignore 的 *.log（更深层的 .gitignore 优先级更高）。
+!outputs/**/*.log

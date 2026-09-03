@@ -1,0 +1,20 @@
+# Local model and conversion artifacts
+models/**
+!models/**/
+!models/**/.gitkeep
+*.bmodel
+*.onnx
+*.onnx.data
+*.npz
+*.safetensors
+
+# C++ build artifacts
+cpp/build*/
+*.o
+*.so
+
+# Python caches and generated verification outputs
+__pycache__/
+*.pyc
+python/test/outputs/debug/
+python/test/outputs/onnx/

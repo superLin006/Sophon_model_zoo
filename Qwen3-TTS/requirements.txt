@@ -1,0 +1,24 @@
+# Qwen3-TTS — ONNX 导出环境（实测版本，源：conda sophon-qwen3-tts）
+# 新建环境：
+#   conda create -n sophon-qwen3-tts python=3.10 -y
+#   conda run -n sophon-qwen3-tts python -m pip install -r requirements.txt
+# 说明：
+#   - qwen-tts==0.1.1 为 Alibaba 官方包（提供 Qwen3TTSModel / Qwen3TTSTokenizer），
+#     若 PyPI 拉不到请从 qwen-tts 源码/官方 index 安装同一版本
+#   - torch 走 --extra-index-url cu124（Qwen3-TTS 官方权重约 1.3GB，GPU 导出更省时；CPU 也可）
+#   - 导出入口：python/export_talker.py（talker/cp/embedding）+ python/export_codec.py（codec）
+#   - 编译 bmodel 用 Docker sophon/tpuc_dev:v3.4-tpumlir-1.28.1，见 python/gen_final.sh
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+torchaudio==2.6.0+cu124
+transformers==4.57.3
+qwen-tts==0.1.1
+onnx==1.22.0
+onnxruntime==1.23.2
+safetensors==0.5.3
+numpy==1.26.4
+soundfile==0.14.0
+librosa==0.11.0
+tqdm==4.68.2
+einops==0.4.1
+accelerate==1.12.0

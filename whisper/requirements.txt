@@ -1,0 +1,18 @@
+# whisper — ONNX 导出 + baseline 环境（实测版本，源：conda sophon-whisper）
+# 新建环境：
+#   conda create -n sophon-whisper python=3.10 -y
+#   conda run -n sophon-whisper python -m pip install -r requirements.txt
+# 说明：openai-whisper 用于加载官方权重（whisper.load_model）出 baseline 与导出；
+#       whisper 导出不依赖 transformers（openai-whisper 自带 tokenizer）。
+#       base 与 large-v3-turbo 共用此环境（turbo 导出需内存 ≥14GB）。
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
+torchaudio==2.11.0+cpu
+openai-whisper==20250625
+onnx==1.21.0
+onnxruntime==1.23.2
+onnxsim==0.6.3
+onnxscript==0.7.0
+numpy==2.2.6
+soundfile==0.13.1
+tqdm==4.67.3

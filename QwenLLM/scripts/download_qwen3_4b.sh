@@ -16,7 +16,7 @@ fi
 
 echo "[INFO] 开始从 ModelScope 下载 Qwen3-4B-AWQ..."
 echo "[INFO] 目标目录: ${TARGET_DIR}"
-conda run -n sophon-llm python3 -c "
+conda run -n sophon-qwenllm python3 -c "
 from modelscope import snapshot_download
 path = snapshot_download('Qwen/Qwen3-4B-AWQ', cache_dir='${QWEN_DIR}', local_dir='${TARGET_DIR}')
 print('[DONE] 下载完成:', path)

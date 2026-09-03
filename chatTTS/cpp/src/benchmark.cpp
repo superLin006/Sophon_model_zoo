@@ -119,7 +119,7 @@ static void print_stats(const std::string& label, const std::vector<double>& arr
 }
 
 int main(int argc, char* argv[]) {
-    std::string model_dir  = "/data/chatTTS-offical/models";
+    std::string model_dir  = "/data/chattts/models";
     std::string spk_file   = "spk_emb.bin";
     int   tpu_id           = 0;
     int   warmup           = 3;

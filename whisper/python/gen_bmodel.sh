@@ -8,28 +8,34 @@
 
 set -e
 
-# 安装 tpu_mlir（强制从本地 whl 安装，避免走网络）
-WHL=$(ls /toolkits/tpu_mlir*.whl 2>/dev/null | head -1)
-if [ -z "$WHL" ]; then
-    echo "[Error] tpu_mlir whl not found in /toolkits/"
-    exit 1
+# 使用公共镜像已安装的 TPU-MLIR；仅在工具不存在时从挂载 wheel 补装。
+if ! command -v model_transform.py >/dev/null 2>&1 || ! command -v model_deploy.py >/dev/null 2>&1; then
+    WHL=$(find /toolkits -maxdepth 1 -type f -name 'tpu_mlir*.whl' -print -quit 2>/dev/null)
+    if [ -z "$WHL" ]; then
+        echo "[Error] model_transform.py/model_deploy.py 不存在，且 /toolkits 无 tpu_mlir wheel"
+        exit 1
+    fi
+    python -m pip install "$WHL" -q --no-deps
 fi
-pip install "$WHL" -q --no-deps 2>/dev/null || pip install "$WHL" -q
 
+MODEL_ROOT="/workspace/whisper"
 MODEL_NAME="base"
-ONNX_DIR="/workspace/models/onnx"
+ONNX_DIR="${MODEL_ROOT}/models/onnx"
 WORK_DIR="/tmp/whisper_compile"
 
 chip="bm1684x"
-quantize="${1:-F32}"   # 默认 F32，可传 F16
+quantize="${1:-F16}"   # 默认 F16（与 deploy_to_board.sh 默认一致），可传 F32
 
 if [ "${quantize}" != "F32" ] && [ "${quantize}" != "F16" ]; then
     echo "[Error] quantize 参数只支持 F32 或 F16，收到: ${quantize}"
     exit 1
 fi
 
-BMODEL_DIR="/workspace/models/BM1684X"
+BMODEL_DIR="${MODEL_ROOT}/models/BM1684X"
+OUTPUT_DIR="${WORK_DIR}/output"
 mkdir -p "${BMODEL_DIR}" "${WORK_DIR}"
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}"
 
 n_state=512
 n_audio_ctx=1500
@@ -58,7 +64,10 @@ model_deploy.py \
     --mlir "whisper_${MODEL_NAME}_encoder.mlir" \
     --quantize ${quantize} \
     --chip ${chip} \
-    --model "${BMODEL_DIR}/whisper_${MODEL_NAME}_encoder_${quantize}.bmodel"
+    --model "${OUTPUT_DIR}/whisper_${MODEL_NAME}_encoder_${quantize}.bmodel"
+
+mv "${OUTPUT_DIR}/whisper_${MODEL_NAME}_encoder_${quantize}.bmodel" \
+   "${BMODEL_DIR}/whisper_${MODEL_NAME}_encoder_${quantize}.bmodel"
 
 echo "[1/2] Encoder 转换完成"
 
@@ -90,7 +99,10 @@ model_deploy.py \
     --quantize ${quantize} \
     --chip ${chip} \
     --disable_layer_group \
-    --model "${BMODEL_DIR}/whisper_${MODEL_NAME}_decoder_${quantize}.bmodel"
+    --model "${OUTPUT_DIR}/whisper_${MODEL_NAME}_decoder_${quantize}.bmodel"
+
+mv "${OUTPUT_DIR}/whisper_${MODEL_NAME}_decoder_${quantize}.bmodel" \
+   "${BMODEL_DIR}/whisper_${MODEL_NAME}_decoder_${quantize}.bmodel"
 
 echo "[2/2] Decoder 转换完成"
 

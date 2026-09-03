@@ -14,7 +14,7 @@ Moonshine streaming-small ONNX 精度验证(与 HF baseline 对比)
     python test/test_onnx.py            # 跑 0.wav + 8k.wav
     python test/test_onnx.py --name 0   # 只跑单个
 
-环境: sophon-whisper (conda)
+环境: sophon-moonshine (conda)
 """
 import argparse
 import os

@@ -7,7 +7,7 @@ Whisper Base PyTorch Baseline 测试
     python test_pytorch.py [audio.wav] [language]
     python test_pytorch.py                         # 自动跑 test_data/ 下所有 wav
 
-环境: sophon-whisper（需确保 ffmpeg 在 PATH 中）
+环境: sophon-whisper（测试脚本用 soundfile 读取 16kHz WAV，不依赖 ffmpeg）
 """
 
 import sys
@@ -42,8 +42,15 @@ def run_one(audio_path: str, language: str = "zh") -> dict:
     print(f"\n[Run] {audio_path}  lang={language}")
     t0 = time.time()
 
+    import soundfile as sf
+    audio, sample_rate = sf.read(audio_path, dtype="float32")
+    if audio.ndim == 2:
+        audio = audio.mean(axis=1)
+    if sample_rate != 16000:
+        raise ValueError(f"测试 WAV 必须是 16kHz，实际为 {sample_rate}Hz")
+
     # 1. 官方 transcribe（ground truth）
-    result = model.transcribe(audio_path, language=language)
+    result = model.transcribe(audio, language=language)
     text = result["text"].strip()
 
     elapsed = time.time() - t0
@@ -51,7 +58,6 @@ def run_one(audio_path: str, language: str = "zh") -> dict:
     print(f"[Time]   {elapsed*1000:.1f} ms")
 
     # 2. 保存 debug 中间输出（供 C++ 对比）
-    audio = whisper.load_audio(audio_path)
     audio = whisper.pad_or_trim(audio)
     mel = whisper.log_mel_spectrogram(audio)        # [80, 3000]
     mel_input = mel.unsqueeze(0)                    # [1, 80, 3000]

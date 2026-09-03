@@ -9,7 +9,7 @@
 namespace vits_tts {
 
 static const int  L_MAX        = 128;   // max padded sequence length
-static const int  T_MEL_FIXED  = 256;   // bmodel fixed T_mel dimension (~3s @ 44100Hz)
+static const int  T_MEL_FIXED  = 512;   // bmodel fixed T_mel dimension (~5.9s @ 44100Hz)
 static const int  Z_DIM        = 192;   // z_p channels
 static const int  UPSAMPLE     = 512;   // samples per mel frame
 static const int  SAMPLE_RATE  = 44100;
@@ -43,13 +43,11 @@ private:
 
     bm_handle_t bm_handle_ = nullptr;
 
-    // Part A: enc_p + dp
-    void* runtime_a_         = nullptr;
-    const bm_net_info_t* net_a_ = nullptr;
-
-    // Part C: flow + decoder
-    void* runtime_c_         = nullptr;
-    const bm_net_info_t* net_c_ = nullptr;
+    // single bmruntime holding all three bmodels
+    void* runtime_ = nullptr;
+    const bm_net_info_t* net_a_  = nullptr;  // enc_p + dp
+    const bm_net_info_t* net_c1_ = nullptr;  // flow
+    const bm_net_info_t* net_c2_ = nullptr;  // decoder
 };
 
 }  // namespace vits_tts

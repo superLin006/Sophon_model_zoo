@@ -2,7 +2,8 @@
 # Qwen3 BM1684X 纯 C++ Demo 交叉编译脚本
 #
 # 推荐在 3_docker/ 的 cross-build docker 中运行（Ubuntu 20.04，glibc 2.31）：
-#   cd /workspace/QwenLLM/cpp && ./build.sh
+#   docker run --rm -v "$PWD":/workspace/repo sophon-cross-build \
+#     bash -lc 'cd /workspace/repo/QwenLLM/cpp && ./build.sh'
 #
 # 用法:
 #   ./build.sh              # 编译，产物在 build/qwen_demo
@@ -29,7 +30,9 @@ fi
 
 cmake -S "${SCRIPT_DIR}" \
       -B "${BUILD_DIR}" \
-      -DCMAKE_BUILD_TYPE=Release
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+      -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++
 
 cmake --build "${BUILD_DIR}" -j"$(nproc)"
 

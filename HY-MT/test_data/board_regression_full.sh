@@ -8,15 +8,19 @@ set -uo pipefail
 MODEL_DIR="${1:-/data/hymt_w4g64}"
 BIN="${BIN:-${MODEL_DIR}/hymt_demo}"
 REPEATS="${REPEATS:-1}"
+CASES=0
+FAILS=0
 
 run_case() {
     local name="$1"
     local max_new_tokens="$2"
     local prompt="$3"
     local repeat
+    CASES=$((CASES + 1))
     for ((repeat = 1; repeat <= REPEATS; repeat++)); do
         echo "===== ${name} repeat=${repeat}/${REPEATS} ====="
         if ! "${BIN}" "${MODEL_DIR}" "${prompt}" "${max_new_tokens}"; then
+            FAILS=$((FAILS + 1))
             echo "[FAIL] ${name} repeat=${repeat}"
         fi
     done
@@ -108,4 +112,4 @@ run_case punctuation_dash 128 '将以下文本翻译为英语，注意只需要�
 # 指令/摘要风格
 run_case api_bullet_zh 192 '将以下文本翻译为英语，注意只需要输出翻译后的结果，不要额外解释：\n\n更新内容包括：修复了 4GB 设备上的内存崩溃问题；新增 --batch 批量模式；弃用了 /v1/legacy 旧接口。'
 
-echo "===== ALL DONE (${REPEATS}x46 cases) ====="
+echo "===== ALL DONE (${REPEATS}x${CASES} cases = $((CASES * REPEATS)) runs, ${FAILS} failed) ====="

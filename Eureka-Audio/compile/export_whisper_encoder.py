@@ -46,7 +46,7 @@ DOWNSAMPLE = 4
 D_LLM      = 2048
 TOKENS     = T_ENC // DOWNSAMPLE  # 375
 
-folder = './tmp/onnx'
+folder = '../models/onnx'
 os.makedirs(folder, exist_ok=True)
 
 enc = full_model.audio_encoder.speech_encoder  # WhisperEncoder

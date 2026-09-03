@@ -6,7 +6,7 @@ SenseVoice Small ONNX 导出脚本
   输入: audio_features [1, 166, 560]  (10s 音频, Fbank80 + LFR7)
   输出: logits [1, 170, 25055]        (170 = 166 + 4 prompt tokens)
 
-prompt embedding 已在 MTK torch_model.py 中固定为 4 个可学习向量，
+prompt embedding 已在 `torch_model.py`（仓库内 `sensevoice/python/`）中固定为 4 个可学习向量，
 无需 Gather/Embedding lookup，对 BM1684X 算子友好。
 
 用法:
@@ -21,17 +21,14 @@ import numpy as np
 import onnx
 import onnxsim
 
-# 复用 MTK 的模型定义和工具函数
-MTK_MODEL_DIR = os.path.join(
-    os.path.dirname(__file__),
-    "../../../MTK_model_zoo/sense-voice/SenseVoice_workspace/model_prepare"
-)
-sys.path.insert(0, os.path.abspath(MTK_MODEL_DIR))
+# 模型定义已 vendor 在本仓库 sensevoice/python/（不再引用任何外部目录）
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from torch_model import SenseVoiceSmall
 from model_utils import load_cmvn, load_pretrained_weights
 
-MODEL_DIR  = os.path.join(os.path.dirname(__file__), "../../../MTK_model_zoo/sense-voice/SenseVoice_workspace/models/sensevoice-small")
+# 权重目录：仓库内本地缓存（gitignore），首次运行 load_model() 会从 FunASR 下载
+MODEL_DIR  = os.path.join(os.path.dirname(__file__), "../models/sensevoice-small")
 
 
 def _fix_conv_kernel_shape(model):
@@ -157,6 +154,9 @@ def export(model: nn.Module, output_dir: str):
         model_sim = _fix_conv_kernel_shape(model_sim)
         onnx.save(model_sim, sim_path)
         print(f"[Simplify] 完成: {os.path.getsize(sim_path)/1024/1024:.1f} MB -> {sim_path}")
+        for raw_path in (onnx_path, onnx_path + ".data"):
+            if os.path.exists(raw_path):
+                os.remove(raw_path)
     else:
         print("[Simplify] 失败，使用原始 ONNX")
         sim_path = onnx_path

@@ -1,0 +1,80 @@
+===== en_zh_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 这是免费的。
+Input tokens: 21, output tokens: 3
+Prefill: 204.945 ms, decode: 23.408 token/s
+===== zh_en_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: This plan needs to be completed by Friday.
+Input tokens: 27, output tokens: 9
+Prefill: 205.88 ms, decode: 23.4112 token/s
+===== ja_zh_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 这列火车会在东京站停靠吗？
+Input tokens: 26, output tokens: 9
+Prefill: 204.934 ms, decode: 23.475 token/s
+===== terminology_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Sophon-based processors are suitable for edge computing.
+Input tokens: 39, output tokens: 10
+Prefill: 206.167 ms, decode: 23.0711 token/s
+===== formatting_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: <target><sn>在运行模型之前，请先安装<sn>transformers==4.56.1</sn>。</sn></target>
+Input tokens: 88, output tokens: 32
+Prefill: 206.501 ms, decode: 22.9221 token/s
+===== en_zh_medium_news repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 该地区铁路运营商在周二宣布，周末期间，列车的运行频率将调整为每十五分钟一班。同时，市区内的几座车站也会提前关闭，以便进行维护工作。乘客们被建议在出发前查看最新的时刻表。
+Input tokens: 54, output tokens: 49
+Prefill: 205.663 ms, decode: 23.0416 token/s
+===== zh_en_medium_business repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Due to the decline in raw material prices and the gradual recovery of overseas orders, the company’s gross profit margin improved in the second quarter. However, the management still believes that exchange rate fluctuations and logistics costs remain to be the main uncertainties in the second half of the year.
+Input tokens: 52, output tokens: 56
+Prefill: 205.071 ms, decode: 22.911 token/s
+===== ja_zh_medium_notice repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 为了进行系统更新，我们将在8月15日凌晨1点至4点期间暂停在线服务。具体结束时间可能会因工作进度而有所调整。请予以理解，给我们一些时间来处理这些工作。
+Input tokens: 86, output tokens: 43
+Prefill: 205.081 ms, decode: 23.0005 token/s
+===== en_zh_technical repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在自回归解码过程中，模型会重新使用之前生成的键值缓存数据。这样就能避免重新计算整个注意力历史记录，不过，当上下文信息变得非常庞大时，内存带宽仍然可能成为瓶颈问题。
+Input tokens: 55, output tokens: 44
+Prefill: 204.842 ms, decode: 23.1 token/s
+===== zh_en_technical repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Quantization doesn’t necessarily lead to a corresponding improvement in overall performance. It’s only when weight retrieval becomes a major bottleneck, and the overhead associated with dequantization is minimal, that a smaller weight format can actually bring benefits.
+Input tokens: 55, output tokens: 48
+Prefill: 207.885 ms, decode: 22.8452 token/s
+===== en_zh_numbers_units repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 该设备在 37.5 秒内处理了 12,480 个请求，平均功耗为 42 瓦特。在整个测试过程中，设备的温度始终保持在 68°C 以下。
+Input tokens: 50, output tokens: 42
+Prefill: 204.831 ms, decode: 22.9508 token/s
+===== zh_en_names_dates repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Li Ming will attend the Edge AI Summit in Shenzhen on September 3, 2026. At 2:30 pm, he will introduce the new generation of inference platforms.
+Input tokens: 45, output tokens: 37
+Prefill: 206.223 ms, decode: 23.0888 token/s
+===== en_zh_long_policy repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在部署该服务之前，工程团队必须完成三项检查。首先，需要将转换后的模型与基于确定性参考模型的模型进行对比，以评估其在短、中、长输入条件下的性能。其次，应该记录模型在预热阶段后的延迟时间，而不是仅依赖一次冷启动时的测量结果。最后，应该保留之前的模型版本，以便在模型精度或稳定性下降时，能够快速回退到之前的版本。只有当所有检查都通过且结果被记录下来后，才能正式发布该服务。
+Input tokens: 105, output tokens: 102
+Prefill: 205.209 ms, decode: 22.8649 token/s
+===== zh_en_long_report repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: This testing process utilizes a fixed random seed and greedy decoding methods, afinage to compare the outputs of different quantization levels. The test set includes various types of text: short sentences, technical paragraphs, numerical units, specialized terms, and labeled texts. Each performance scenario is run multiple times after warming up, and the first word delay as well as subsequent decoding speeds are recorded for each scenario. If a low-bitmodel provides faster results, but still encounters errors such as omissions, repetitions, or terminology mistakes in long texts, it cannot be directly replaced by the higher-precision model.
+Input tokens: 106, output tokens: 115
+Prefill: 206.567 ms, decode: 22.8622 token/s
+===== formatting_medium repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: <target><code>MAX_LENGTH=512</code>，重新启动<product>Sophon Service</product>，并确认状态为<b>健康</b>。</target>
+Input tokens: 84, output tokens: 35
+Prefill: 208.243 ms, decode: 22.9772 token/s
+===== terminology_medium repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: The Sophon team has optimized the edge inference service using the tensor processor, while maintaining a highly accurate model that can be rolled back.
+Input tokens: 67, output tokens: 27
+Prefill: 205.281 ms, decode: 22.9866 token/s

@@ -9,7 +9,7 @@
 - dtype: BF16
 - attention: eager
 - generation: deterministic greedy
-- weights: `/home/xh/itc_project/RK_model_zoo/models/HY-MT1.5-1.8B`
+- weights: `$MODEL_PATH`（环境变量指定，不写入仓库）
 
 ## Architecture
 

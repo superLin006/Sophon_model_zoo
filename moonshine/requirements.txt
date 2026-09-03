@@ -1,0 +1,17 @@
+# moonshine — ONNX 导出环境（实测版本，源：conda sophon-moonshine）
+# 新建环境：
+#   conda create -n sophon-moonshine python=3.10 -y
+#   conda run -n sophon-moonshine python -m pip install -r requirements.txt
+# 说明：torch 走 --extra-index-url（PyTorch CPU 官方源），其余从 PyPI。
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
+torchaudio==2.11.0+cpu
+transformers==5.14.1
+onnx==1.21.0
+onnxruntime==1.23.2
+onnxsim==0.6.3
+onnxscript==0.7.0
+numpy==2.2.6
+soundfile==0.13.1
+scipy==1.15.3
+tqdm==4.67.3

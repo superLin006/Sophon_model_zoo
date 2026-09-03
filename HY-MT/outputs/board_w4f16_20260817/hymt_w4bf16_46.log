@@ -1,0 +1,306 @@
+===== en_zh_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 这是免费的。
+Input tokens: 21, output tokens: 3
+Prefill: 202.132 ms, decode: 34.5173 token/s
+===== zh_en_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: This plan needs to be completed by Friday.
+Input tokens: 27, output tokens: 9
+Prefill: 202.137 ms, decode: 34.9529 token/s
+===== ja_zh_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 这列火车会在东京站停靠吗？
+Input tokens: 26, output tokens: 9
+Prefill: 204.737 ms, decode: 34.1871 token/s
+===== terminology_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Sophon processors are suitable for edge computing.
+Input tokens: 39, output tokens: 9
+Prefill: 202.104 ms, decode: 34.9087 token/s
+===== formatting_short repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: <target><sn>请在运行模型之前安装 <sn>transformers==4.56.1</sn>。</sn></target>
+Input tokens: 88, output tokens: 29
+Prefill: 202.244 ms, decode: 34.4046 token/s
+===== en_zh_medium_news repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 该地区铁路运营商在周二宣布，周末的列车运行频率将改为每十五分钟一班。同时，市区内的几个车站也会因为维护工作而提前关闭。乘客们被建议在出发前查看最新的时刻表。
+Input tokens: 54, output tokens: 46
+Prefill: 203.45 ms, decode: 34.3545 token/s
+===== zh_en_medium_business repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Due to the decline in raw material prices and the gradual recovery of overseas orders, the company’s gross profit margin in the second quarter improved. However, the management still believes that exchange rate fluctuations and logistics costs remain the main uncertainties in the second half of the year.
+Input tokens: 52, output tokens: 54
+Prefill: 203.908 ms, decode: 34.2419 token/s
+===== ja_zh_medium_notice repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 为了进行系统更新，从8月15日凌晨1点至凌晨4点，在线服务将暂停。由于工作进度不同，实际结束时间可能会有所调整。请予以理解，给我们一些时间来处理这件事。
+Input tokens: 86, output tokens: 44
+Prefill: 203.546 ms, decode: 34.3626 token/s
+===== en_zh_technical repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在自回归解码过程中，模型会重复使用由之前的数据点生成的键值缓存。这样就能避免重新计算整个注意力历史记录，不过当上下文规模较大时，内存带宽仍然可能成为瓶颈问题。
+Input tokens: 55, output tokens: 42
+Prefill: 203.558 ms, decode: 34.5781 token/s
+===== zh_en_technical repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Quantization doesn’t necessarily result in a proportional increase in overall performance. It’s only when weight retrieval is the main bottleneck and the overhead of dequantization is sufficiently low that a smaller weight format can provide significant benefits.
+Input tokens: 55, output tokens: 46
+Prefill: 203.791 ms, decode: 34.3318 token/s
+===== en_zh_numbers_units repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 该设备在 37.5 秒内处理了 12,480 个请求，平均功耗为 42 瓦特，且在整个测试过程中，设备的温度始终保持在 68°C 以下。
+Input tokens: 50, output tokens: 43
+Prefill: 203.35 ms, decode: 34.1858 token/s
+===== zh_en_names_dates repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Li Ming will attend the Edge AI Summit in Shenzhen on September 3, 2026. He will introduce the new generation of inference platforms at 2:30 pm.
+Input tokens: 45, output tokens: 36
+Prefill: 202.514 ms, decode: 34.6003 token/s
+===== en_zh_long_policy repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在部署该服务之前，工程团队必须完成三项检查。首先，需要将转换后的模型与确定性参考模型进行比对，以验证其在短、中、长输入条件下的性能。其次，应记录启动后的延迟时间，而不是仅依赖一次冷启动时的测量结果。最后，应保留之前的模型版本，以便在精度或稳定性出现下降时，能够快速回退到之前的模型版本。只有当所有检查都通过且结果被记录下来后，才能继续发布该服务。
+Input tokens: 105, output tokens: 98
+Prefill: 202.386 ms, decode: 34.2107 token/s
+===== zh_en_long_report repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: This test uses a fixed random seed and greedy decoding methods, in order to compare the outputs of different quantization levels. The test set includes short sentences, technical paragraphs, numerical units, technical terms, and labeled text. Each performance case is run multiple times after warming up, and the first word element delay and subsequent decoding speed are recorded for each case. If a low-bit model is faster, it cannot be directly replaced by the current high-precision version, especially if there are omissions, repetitions, or errors in terms within the longer text.
+Input tokens: 106, output tokens: 108
+Prefill: 204.372 ms, decode: 34.359 token/s
+===== formatting_medium repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: <target><code>MAX_LENGTH=512</code>，重新启动<product>Sophon Service>，并确认状态为<b>健康</b>。</code>
+Input tokens: 84, output tokens: 33
+Prefill: 205.206 ms, decode: 34.4589 token/s
+===== terminology_medium repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: The Sophon team has optimized the edge inference service using the tensor processor, while still maintaining the high-precision models that can be retried.
+Input tokens: 67, output tokens: 28
+Prefill: 203.613 ms, decode: 34.3915 token/s
+===== en_zh_daily_greeting repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 谢谢您的等待，您的座位已经准备好了。
+Input tokens: 24, output tokens: 9
+Prefill: 203.401 ms, decode: 34.36 token/s
+===== en_zh_daily_weather repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 今天下午似乎会下雨，所以请带上雨伞吧。
+Input tokens: 26, output tokens: 13
+Prefill: 204.916 ms, decode: 34.2698 token/s
+===== en_zh_daily_travel repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 下一班前往机场的火车从三号站台出发。
+Input tokens: 26, output tokens: 12
+Prefill: 203.343 ms, decode: 34.1087 token/s
+===== en_zh_daily_shopping repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 这款夹克有黑色、深蓝色和橄榄绿三种颜色可供选择。
+Input tokens: 26, output tokens: 16
+Prefill: 202.371 ms, decode: 34.8982 token/s
+===== en_zh_daily_meeting repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 我们将把这次站立会议的时间定在明天九点半。
+Input tokens: 26, output tokens: 12
+Prefill: 202.235 ms, decode: 34.6221 token/s
+===== en_zh_daily_email repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 请在此电子邮件中附上更新后的发票。
+Input tokens: 24, output tokens: 10
+Prefill: 202.832 ms, decode: 33.9156 token/s
+===== zh_en_daily_greeting repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Good morning! Welcome. Do you need anything to drink?
+Input tokens: 32, output tokens: 12
+Prefill: 203.075 ms, decode: 34.5027 token/s
+===== zh_en_daily_weather repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: It will rain later today. Remember to bring an umbrella when you go out.
+Input tokens: 32, output tokens: 16
+Prefill: 203.049 ms, decode: 34.8135 token/s
+===== zh_en_daily_travel repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: The next train to the airport departs from platform number three.
+Input tokens: 31, output tokens: 13
+Prefill: 202.498 ms, decode: 34.5245 token/s
+===== zh_en_daily_shopping repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: This jacket comes in three colors: black, dark blue, and olive green.
+Input tokens: 34, output tokens: 16
+Prefill: 201.942 ms, decode: 34.6544 token/s
+===== zh_en_daily_meeting repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Let's move the meeting to tomorrow at 9:30 am.
+Input tokens: 31, output tokens: 14
+Prefill: 202.996 ms, decode: 34.5127 token/s
+===== zh_en_daily_email repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Please check the updated invoice. The attachment is included in this email.
+Input tokens: 35, output tokens: 14
+Prefill: 202.002 ms, decode: 34.3722 token/s
+===== ja_zh_restaurant repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 请给我一份菜单吧。
+Input tokens: 27, output tokens: 6
+Prefill: 203.197 ms, decode: 34.2928 token/s
+===== ja_zh_hotel repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 退房的时间截止于上午11点。
+Input tokens: 28, output tokens: 8
+Prefill: 203.91 ms, decode: 34.5177 token/s
+===== zh_ja_package repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: このパッケージには、2晩の宿泊と朝食が含まれています。
+Input tokens: 31, output tokens: 22
+Prefill: 203.425 ms, decode: 34.1673 token/s
+===== zh_ja_notice repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: システムは今週の金曜日の夜10時からメンテナンスを実施します。その間、サービスは約1時間中断されます。
+Input tokens: 37, output tokens: 38
+Prefill: 203.647 ms, decode: 34.2922 token/s
+===== terminology_chip repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: BM1684X's computing power density is very suitable for video analysis scenarios.
+Input tokens: 44, output tokens: 16
+Prefill: 203.691 ms, decode: 34.1157 token/s
+===== terminology_edge repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Edge inference requires the model to maintain a stable delay under limited memory and power consumption constraints.
+Input tokens: 45, output tokens: 18
+Prefill: 203.456 ms, decode: 34.0906 token/s
+===== terminology_nlp repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: The evaluation of the quality of machine translation requires consideration of both fluency and fidelity.
+Input tokens: 43, output tokens: 16
+Prefill: 203.511 ms, decode: 34.2273 token/s
+===== names_city_event repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: The developer conference to be held in Hangzhou next week is expected to attract more than 3,000 engineers to participate.
+Input tokens: 35, output tokens: 25
+Prefill: 203.551 ms, decode: 34.4192 token/s
+===== names_products repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Qwen3-TTS supports the cloning of voices in twelve languages, along with custom voice settings.
+Input tokens: 34, output tokens: 20
+Prefill: 203.252 ms, decode: 34.4516 token/s
+===== names_abbr repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 新的NPU能够以8位整数精度，实现32 TOPS的运算能力。
+Input tokens: 30, output tokens: 17
+Prefill: 204.393 ms, decode: 34.5413 token/s
+===== formatting_code repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: <target><code>cmake -B build</code>，然后调用<code>make</code>来编译演示程序。</code>
+Input tokens: 77, output tokens: 29
+Prefill: 203.903 ms, decode: 34.7156 token/s
+===== formatting_bold repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: <target><b>型号</b>比之前的<b>版本</b>更快。</b></target>
+Input tokens: 75, output tokens: 23
+Prefill: 204.297 ms, decode: 34.2936 token/s
+===== formatting_mixed repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: <target><code>app_3.2</code>部署到<b>边缘节点</b>，然后重新启动<code>nginx</code>。</code>
+Input tokens: 80, output tokens: 35
+Prefill: 203.107 ms, decode: 34.5912 token/s
+===== numbers_stats repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 该调查涵盖了12个地区的3,248名用户。其中，有67.3%的用户表示页面加载速度更快。
+Input tokens: 37, output tokens: 26
+Prefill: 204.635 ms, decode: 34.4597 token/s
+===== numbers_spec repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Peak bandwidth: 1.6 TB/s; Power consumption: 75 W; Standby current: less than 1.2 A.
+Input tokens: 44, output tokens: 30
+Prefill: 204.703 ms, decode: 34.5403 token/s
+===== numbers_time repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 该批处理任务在2小时45分钟内完成，比之前快了大约三倍。
+Input tokens: 33, output tokens: 18
+Prefill: 203.64 ms, decode: 34.6842 token/s
+===== numbers_currency repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 该升级服务的费用为每个节点4,200美元。如果订购的数量超过10个节点，则可享受15%的折扣。
+Input tokens: 37, output tokens: 26
+Prefill: 203.401 ms, decode: 33.9416 token/s
+===== tech_kv_cache repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在生成过程中，键值缓存会存储之前处理的令牌的中间结果。因此，模型只需处理新的查询，而无需重新计算所有的历史数据。
+Input tokens: 47, output tokens: 30
+Prefill: 203.611 ms, decode: 34.3075 token/s
+===== tech_quant_group repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Grouping quantization involves scaling by groups of 64 elements each. This reduces the overhead associated with inverse quantization, while also keeping the error within an acceptable range.
+Input tokens: 46, output tokens: 32
+Prefill: 204.238 ms, decode: 34.1804 token/s
+===== tech_tpu_sched repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 编译器会将图划分为多个层次结构，这些层次结构符合芯片上的内存容量限制。然后，调度器会将这些层次结构分配给可用的核心，从而消除内存访问的延迟。
+Input tokens: 42, output tokens: 37
+Prefill: 202.867 ms, decode: 34.5438 token/s
+===== tech_streaming repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Stream-based identification divides the audio into segments of one second in length. The delay between the first character and the next character can be reduced to less than 300 milliseconds.
+Input tokens: 42, output tokens: 34
+Prefill: 203.446 ms, decode: 34.0242 token/s
+===== news_market repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Affected by the recovery in overseas orders, the company's revenue in the second quarter increased by 18% year-over-year, with the gross profit margin reaching 42%.
+Input tokens: 38, output tokens: 35
+Prefill: 203.279 ms, decode: 34.288 token/s
+===== news_policy repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Regulatory authorities require all listed companies to disclose the use of artificial intelligence models in their annual reports.
+Input tokens: 33, output tokens: 20
+Prefill: 202.16 ms, decode: 33.7312 token/s
+===== en_news_semiconductor repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 半导体产品的出口量连续第三个月有所上升，这主要得益于对先进封装技术和高带宽内存的需求增加。
+Input tokens: 36, output tokens: 23
+Prefill: 201.937 ms, decode: 34.3291 token/s
+===== en_news_energy repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 电网运营商正在对电池储能系统进行测试，以缓解傍晚时分的高峰负荷，从而避免可再生能源电力被削减的情况发生。
+Input tokens: 35, output tokens: 24
+Prefill: 203.227 ms, decode: 34.2807 token/s
+===== long_tech_zh repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: In the deployment of large models, inference services typically face three challenges. First, the memory bandwidth determines the generation latency for each element, and the read operation of weights often becomes a major bottleneck. Second, dynamic shapes can reduce the efficiency of compiler optimizations; therefore, in production environments, static input shapes are used, along with techniques for filling and alignment. Finally, when multiple users are concurrent, cache conflicts can exacerbate latency issues, requiring effective batch processing and scheduling strategies. Only by managing these factors simultaneously can we ensure that the end-to-end throughput and latency metrics meet commercial requirements.
+Input tokens: 112, output tokens: 116
+Prefill: 204.382 ms, decode: 34.1529 token/s
+===== long_news_en repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 周一，城市官员公布了一项为期十年的交通规划。该计划包括三条新的地铁线路、一条专用公交通道，以及一条连接市中心与周边十二个社区的自行车道网络。第一阶段预计将在明年春季开始建设，届时将新增约40公里的轨道线路。该项目的资金来源包括联邦拨款、市政债券，以及今年早些时候批准的适度票价上涨措施。支持该计划的人士表示欢迎，但同时指出，车站的便利性和最后一公里的交通状况将决定该计划是否能够真正减少汽车的使用频率。
+Input tokens: 117, output tokens: 106
+Prefill: 203.998 ms, decode: 34.3058 token/s
+===== long_report_zh repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: The rapid increase in the number of edge devices has led to new computing demands. Unlike cloud data centers, edge devices typically have limited power consumption and poor cooling conditions, which means they can only support smaller models. Therefore, model compression and quantization become crucial steps in the deployment process. Experiments have shown that batch quantization can reduce the size of models by up to four times, while maintaining the quality of the output. The report recommends conducting stability tests for three days before official launch, covering various load and network fluctuation scenarios. It also recommends keeping a backup of the old version for quick rollback in case of issues.
+Input tokens: 107, output tokens: 121
+Prefill: 203.879 ms, decode: 34.1282 token/s
+===== long_instruction_en repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 请在周四之前仔细审查附件中的提案。该文档对比了三种部署新语音服务的方案：一种是本地服务器部署方式，另一种则是使用托管在云中的实例，第三种则是利用已经运行了我们的认证系统的边缘网关。第二种方案虽然前期成本最低，但会收取按分钟计的费用。第三种方案则可以将所有音频数据保留在本地，这样就能简化合规性要求，不过，该边缘网关在计算资源方面存在限制，无法满足流媒体解码的需求。我倾向于采用混合式方案，即利用云来处理突发流量，同时保留本地部署的默认路径。如果在周五上午与供应商进行通话之前，如果您有不同意见，请告诉我。
+Input tokens: 130, output tokens: 137
+Prefill: 206.096 ms, decode: 34.2276 token/s
+===== punct_zh repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: Note: Do not restart the node during the maintenance window period; otherwise, cache data may be lost (see Section 3).
+Input tokens: 44, output tokens: 26
+Prefill: 203.844 ms, decode: 34.2794 token/s
+===== punct_en repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: 在部署新代理程序时，应使用“beta”标志，而不是传统的标志。
+Input tokens: 32, output tokens: 17
+Prefill: 203.473 ms, decode: 34.1832 token/s
+===== punctuation_dash repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: There are three criteria for acceptance: complete functionality, satisfactory latency, and complete documentation. None of these criteria can be neglected.
+Input tokens: 36, output tokens: 25
+Prefill: 203.416 ms, decode: 34.1632 token/s
+===== api_bullet_zh repeat=1/1 =====
+open usercpu.so, init user_cpu_init 
+Translation: The updates include the following improvements: fixed the memory crash issue on 4GB devices; added the --batch batch mode; and deprecated the /v1/legacy interface.
+Input tokens: 53, output tokens: 35
+Prefill: 202.559 ms, decode: 34.4113 token/s
+===== ALL DONE (1x46 cases) =====

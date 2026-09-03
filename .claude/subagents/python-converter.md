@@ -4,7 +4,7 @@
 
 ## 硬性约束
 
-1. ONNX 导出用 `sophon-export` conda 环境；bmodel 转换在 `sophon/tpuc_dev:v3.4-tpumlir-1.28.1` Docker 内执行（镜像自带 tpu-mlir，无需装 whl）
+1. ONNX 导出用**该模型根目录 `requirements.txt` 建出的 conda 环境**（不存在则按 `conda create -n <env> python=<版本> -y` + `pip install -r <模型>/requirements.txt` 从零创建），一律 `conda run -n <env>` 执行；bmodel 转换在 `sophon-tpumlir`/`sophon-tpumlir-v128` Docker 容器内执行（内含 tpu_mlir 1.28.1，无需装 whl）
 2. opset 17，固定 shape（tpu-mlir 不支持动态 shape）
 3. **网络结构调整参考官方源码**（import 官方包取 layer 对象，如 Qwen3-TTS 的 `export_talker.py`），不手写网络结构
 4. **板卡 sail 验证必做**：bmodel 板卡端到端推理与 baseline 对比通过才算合格，才可进入 C++

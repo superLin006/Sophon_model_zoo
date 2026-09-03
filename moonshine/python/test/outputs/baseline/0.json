@@ -81,8 +81,8 @@
     2
   ],
   "decoder_steps": 28,
-  "generate_time_s": 0.552,
-  "decoder_loop_time_s": 0.412,
+  "generate_time_s": 0.745,
+  "decoder_loop_time_s": 0.466,
   "max_new_tokens": 49,
   "model": "moonshine-streaming-small",
   "dtype": "F32",

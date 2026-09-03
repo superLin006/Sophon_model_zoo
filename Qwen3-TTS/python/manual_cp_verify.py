@@ -2,13 +2,19 @@ import torch
 from transformers.cache_utils import DynamicCache
 from qwen_tts import Qwen3TTSModel
 
-MODEL="/home/xh/itc_project/RK_model_zoo/models/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+import os
+
+MODEL = os.environ.get(
+    "QWEN3_TTS_MODEL",
+    "请通过环境变量 QWEN3_TTS_MODEL 设置权重目录",
+)
 tts=Qwen3TTSModel.from_pretrained(MODEL,device_map="cpu",dtype=torch.float32,attn_implementation="eager",local_files_only=True)
 m=tts.model
 cp=m.talker.code_predictor
 cp.config._attn_implementation="eager"
 import numpy as np
-hid=np.load('/home/xh/itc_project/Sophon_model_zoo/Qwen3-TTS/python/test/outputs/baseline/greedy_hidden.npy')[0].astype(np.float32)
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+hid=np.load(os.path.join(REPO, "python", "test", "outputs", "baseline", "greedy_hidden.npy"))[0].astype(np.float32)
 past_hidden=torch.from_numpy(hid)
 code0=1995
 c0=m.talker.model.codec_embedding(torch.tensor([code0]))

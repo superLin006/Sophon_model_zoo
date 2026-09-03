@@ -1,0 +1,23 @@
+# Local model weights and generated bmodels
+Qwen3-*/
+models/**
+!models/BM1684X/
+!models/BM1684X/.gitkeep
+
+# Vendor source cloned locally
+LLM-TPU/
+
+# Conversion and build outputs
+compile/tmp/
+cpp/build*/
+demo/python_demo/build/
+*.bmodel
+*.mlir
+*.npz
+*.profile
+*.log
+
+# Python caches and benchmark outputs
+__pycache__/
+*.pyc
+benchmark_*.json

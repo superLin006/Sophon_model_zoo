@@ -8,8 +8,8 @@
   "state_layout": {
     "envelope": "sophon_external_batch1",
     "external_batch": 1,
-    "inner_semantics": "MTK stack layer axis remains the leading dimension 2; it is not batch",
-    "unwrap": "state.squeeze(0) before EncoderMTK; state.unsqueeze(0) after EncoderMTK"
+    "inner_semantics": "streaming stack layer axis remains the leading dimension 2; it is not batch",
+    "unwrap": "state.squeeze(0) before EncoderStreaming; state.unsqueeze(0) after EncoderStreaming"
   },
   "networks": {
     "encoder": {

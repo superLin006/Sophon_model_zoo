@@ -17,6 +17,8 @@ static void print_usage(const char* prog) {
               << "  --batch-file   <file>  synthesize non-comment lines with one model load\n"
               << "  --output-dir   <dir>   batch WAV/manifest output directory\n"
               << "  --spk-emb      <file>  speaker embedding binary (float32, 768 values)\n"
+              << "  --voice-prompt <file>  DVAE prompt from python --prompt-out\n"
+              << "  --ref-text     <text>  exact transcript paired with voice prompt\n"
               << "  --speed        <1-9>   speaking speed (default: 5)\n"
               << "  --temp         <val>   sampling temperature (default: 0.0001)\n"
               << "  --tpu-id       <id>    TPU device id (default: 0)\n"
@@ -30,6 +32,8 @@ int main(int argc, char* argv[]) {
     std::string text       = "大家好，我是一个文本转语音模型，专为对话场景设计。";
     std::string output     = "output.wav";
     std::string spk_file;
+    std::string voice_prompt_file;
+    std::string ref_text;
     std::string batch_file;
     std::string output_dir = "batch_output";
     int   speed        = 5;
@@ -44,6 +48,8 @@ int main(int argc, char* argv[]) {
         else if (!std::strcmp(argv[i], "--text")         && i+1 < argc) text         = argv[++i];
         else if (!std::strcmp(argv[i], "--output")       && i+1 < argc) output       = argv[++i];
         else if (!std::strcmp(argv[i], "--spk-emb")      && i+1 < argc) spk_file     = argv[++i];
+        else if (!std::strcmp(argv[i], "--voice-prompt") && i+1 < argc) voice_prompt_file = argv[++i];
+        else if (!std::strcmp(argv[i], "--ref-text")     && i+1 < argc) ref_text     = argv[++i];
         else if (!std::strcmp(argv[i], "--batch-file")   && i+1 < argc) batch_file   = argv[++i];
         else if (!std::strcmp(argv[i], "--output-dir")   && i+1 < argc) output_dir   = argv[++i];
         else if (!std::strcmp(argv[i], "--speed")        && i+1 < argc) speed        = std::stoi(argv[++i]);
@@ -56,9 +62,12 @@ int main(int argc, char* argv[]) {
     }
 
     ChatTTSConfig cfg;
-    cfg.gpt_model_path     = model_dir + "/chattts-llama_int4_1dev_1024_bm1684x.bmodel";
-    cfg.decoder_model_path = model_dir + "/decoder_1-768-1024_bm1684x.bmodel";
-    cfg.vocos_model_path   = model_dir + "/vocos_1-100-2048_bm1684x.bmodel";
+    std::filesystem::path bmodel_dir = model_dir;
+    if (std::filesystem::exists(bmodel_dir / "BM1684X"))
+        bmodel_dir /= "BM1684X";
+    cfg.gpt_model_path     = (bmodel_dir / "chattts-llama_int4_1dev_1024_bm1684x.bmodel").string();
+    cfg.decoder_model_path = (bmodel_dir / "decoder_1-768-1024_bm1684x.bmodel").string();
+    cfg.vocos_model_path   = (bmodel_dir / "vocos_1-100-2048_bm1684x.bmodel").string();
     cfg.vocab_path         = model_dir + "/asset/tokenizer/vocab.txt";
     cfg.homophones_map_path= model_dir + "/asset/homophones_map.json";
     cfg.tpu_id             = tpu_id;
@@ -67,6 +76,18 @@ int main(int argc, char* argv[]) {
     auto t0 = std::chrono::steady_clock::now();
 
     ChatTTS tts(cfg);
+
+    if (!voice_prompt_file.empty()) {
+        if (!spk_file.empty()) {
+            std::cerr << "Error: --voice-prompt and --spk-emb are mutually exclusive.\n";
+            return 1;
+        }
+        if (!tts.load_voice_prompt(voice_prompt_file, ref_text)) {
+            std::cerr << "Error: failed to load voice prompt: " << voice_prompt_file << "\n";
+            return 1;
+        }
+        std::cout << "Voice prompt loaded: " << voice_prompt_file << "\n";
+    }
 
     if (!spk_file.empty()) {
         if (!tts.load_speaker(spk_file)) {

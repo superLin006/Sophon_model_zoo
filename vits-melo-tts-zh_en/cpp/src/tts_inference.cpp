@@ -20,25 +20,26 @@ TTSInference::~TTSInference() { release(); }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-static int load_bmodel(bm_handle_t handle, const std::string& path,
-                       void** runtime, const bm_net_info_t** net_info) {
-    *runtime = bmrt_create(handle);
-    if (!*runtime) { std::cerr << "[Error] bmrt_create failed\n"; return -1; }
-
-    if (!bmrt_load_bmodel(*runtime, path.c_str())) {
+// Load one bmodel into an existing runtime; return the first network found.
+static const bm_net_info_t* load_bmodel_into(void* runtime, const std::string& path) {
+    if (!bmrt_load_bmodel(runtime, path.c_str())) {
         std::cerr << "[Error] bmrt_load_bmodel failed: " << path << "\n";
-        return -1;
+        return nullptr;
     }
+    // Network names accumulate across loads; query count each time.
+    int net_count = bmrt_get_network_number(runtime);
+    if (net_count <= 0) {
+        std::cerr << "[Error] No networks after loading: " << path << "\n";
+        return nullptr;
+    }
+    // The most recently loaded network is appended last.
     const char** names = nullptr;
-    bmrt_get_network_names(*runtime, &names);
-    if (!names || !names[0]) {
-        std::cerr << "[Error] No networks in: " << path << "\n";
-        return -1;
-    }
-    *net_info = bmrt_get_network_info(*runtime, names[0]);
-    std::cout << "[Init] Loaded " << path << "  net=" << names[0] << "\n";
+    bmrt_get_network_names(runtime, &names);
+    const char* last_name = names[net_count - 1];
+    const bm_net_info_t* info = bmrt_get_network_info(runtime, last_name);
+    std::cout << "[Init] Loaded " << path << "  net=" << last_name << "\n";
     free(names);
-    return 0;
+    return info;
 }
 
 // ─── init ────────────────────────────────────────────────────────────────────
@@ -51,11 +52,18 @@ int TTSInference::init(const char* model_dir, const char* precision) {
         std::cerr << "[Error] bm_dev_request failed\n"; return -1;
     }
 
-    std::string path_a = base + "/vits_part_a_" + prec + ".bmodel";
-    std::string path_c = base + "/vits_part_c_" + prec + ".bmodel";
+    // One shared runtime — all three bmodels share the same TPU DDR allocator,
+    // preventing address conflicts that occur when using separate runtimes.
+    runtime_ = bmrt_create(bm_handle_);
+    if (!runtime_) { std::cerr << "[Error] bmrt_create failed\n"; return -1; }
 
-    if (load_bmodel(bm_handle_, path_a, &runtime_a_, &net_a_) != 0) return -1;
-    if (load_bmodel(bm_handle_, path_c, &runtime_c_, &net_c_) != 0) return -1;
+    std::string path_a  = base + "/vits_part_a_"  + prec + ".bmodel";
+    std::string path_c1 = base + "/vits_part_c1_" + prec + ".bmodel";
+    std::string path_c2 = base + "/vits_part_c2_" + prec + ".bmodel";
+
+    net_a_  = load_bmodel_into(runtime_, path_a);   if (!net_a_)  return -1;
+    net_c1_ = load_bmodel_into(runtime_, path_c1);  if (!net_c1_) return -1;
+    net_c2_ = load_bmodel_into(runtime_, path_c2);  if (!net_c2_) return -1;
 
     initialized_ = true;
     return 0;
@@ -185,7 +193,7 @@ TTSResult TTSInference::run(const int64_t* tokens, const int64_t* tones, int seq
     out_a[3].shape = {3, {1,1,L_MAX}};          // x_mask
 
     auto t0 = Clock::now();
-    bool ok_a = bmrt_launch_tensor_ex(runtime_a_, net_a_->name,
+    bool ok_a = bmrt_launch_tensor_ex(runtime_, net_a_->name,
                                       in_a, 3, out_a, 4, true, false);
     if (!ok_a) { std::cerr << "[Error] Part A launch failed\n"; return res; }
     bm_thread_sync(bm_handle_);
@@ -226,62 +234,95 @@ TTSResult TTSInference::run(const int64_t* tokens, const int64_t* tones, int seq
               << "  time=" << res.part_b_ms << "ms\n";
 
     // =========================================================
-    // Part C: TPU  →  audio[1,1,T_audio_fixed]
-    // Pad z_p to [1,192,T_MEL_FIXED], build y_mask
+    // Part C1: TPU flow  z_p[1,192,T_MEL_FIXED] + y_mask[1,1,T_MEL_FIXED]
+    //                  → z_hat[1,192,T_MEL_FIXED]
+    // Part C2: TPU decoder  z_hat[1,192,T_MEL_FIXED]
+    //                     → audio[1,1,T_MEL_FIXED*UPSAMPLE]
     // =========================================================
-    // z_p padded
-    std::vector<float> z_p_pad(Z_DIM * T_MEL_FIXED, 0.0f);
     int copy_t = std::min(T_mel_actual, T_MEL_FIXED);
+
+    // Pad z_p [Z_DIM, T_mel_actual] → [Z_DIM, T_MEL_FIXED]
+    std::vector<float> z_p_pad(Z_DIM * T_MEL_FIXED, 0.0f);
     for (int z = 0; z < Z_DIM; ++z) {
         std::copy(z_p.data() + z * T_mel_actual,
                   z_p.data() + z * T_mel_actual + copy_t,
                   z_p_pad.data() + z * T_MEL_FIXED);
     }
 
-    // y_mask: 1 for valid frames, 0 for padding
+    // y_mask [1,1,T_MEL_FIXED]: 1 for valid frames, 0 for padding
     std::vector<float> y_mask(T_MEL_FIXED, 0.0f);
     for (int i = 0; i < copy_t; ++i) y_mask[i] = 1.0f;
 
-    bm_tensor_t in_c[2], out_c[1];
-
-    // Input 0: z_p_padded [1,192,256]
-    bm_malloc_device_byte(bm_handle_, &in_c[0].device_mem,
-                          Z_DIM * T_MEL_FIXED * sizeof(float));
-    in_c[0].dtype   = BM_FLOAT32;
-    in_c[0].st_mode = BM_STORE_1N;
-    in_c[0].shape   = {3, {1, Z_DIM, T_MEL_FIXED}};
-    bm_memcpy_s2d(bm_handle_, in_c[0].device_mem, z_p_pad.data());
-
-    // Input 1: y_mask [1,1,256]
-    bm_malloc_device_byte(bm_handle_, &in_c[1].device_mem,
-                          T_MEL_FIXED * sizeof(float));
-    in_c[1].dtype   = BM_FLOAT32;
-    in_c[1].st_mode = BM_STORE_1N;
-    in_c[1].shape   = {3, {1, 1, T_MEL_FIXED}};
-    bm_memcpy_s2d(bm_handle_, in_c[1].device_mem, y_mask.data());
-
-    // Output: audio [1,1,T_audio_fixed]
-    int audio_out_n = T_MEL_FIXED * UPSAMPLE;
-    bm_malloc_device_byte(bm_handle_, &out_c[0].device_mem,
-                          audio_out_n * sizeof(float));
-    out_c[0].dtype   = BM_FLOAT32;
-    out_c[0].st_mode = BM_STORE_1N;
-    out_c[0].shape   = {3, {1, 1, audio_out_n}};
-
     auto t4 = Clock::now();
-    bool ok_c = bmrt_launch_tensor_ex(runtime_c_, net_c_->name,
-                                      in_c, 2, out_c, 1, true, false);
-    if (!ok_c) { std::cerr << "[Error] Part C launch failed\n"; return res; }
+
+    // ── C1: flow ──────────────────────────────────────────────
+    bm_tensor_t in_c1[2], out_c1[1];
+
+    bm_malloc_device_byte(bm_handle_, &in_c1[0].device_mem,
+                          Z_DIM * T_MEL_FIXED * sizeof(float));
+    in_c1[0].dtype   = BM_FLOAT32;
+    in_c1[0].st_mode = BM_STORE_1N;
+    in_c1[0].shape   = {3, {1, Z_DIM, T_MEL_FIXED}};
+    bm_memcpy_s2d(bm_handle_, in_c1[0].device_mem, z_p_pad.data());
+
+    bm_malloc_device_byte(bm_handle_, &in_c1[1].device_mem,
+                          T_MEL_FIXED * sizeof(float));
+    in_c1[1].dtype   = BM_FLOAT32;
+    in_c1[1].st_mode = BM_STORE_1N;
+    in_c1[1].shape   = {3, {1, 1, T_MEL_FIXED}};
+    bm_memcpy_s2d(bm_handle_, in_c1[1].device_mem, y_mask.data());
+
+    bm_malloc_device_byte(bm_handle_, &out_c1[0].device_mem,
+                          Z_DIM * T_MEL_FIXED * sizeof(float));
+    out_c1[0].dtype   = BM_FLOAT32;
+    out_c1[0].st_mode = BM_STORE_1N;
+    out_c1[0].shape   = {3, {1, Z_DIM, T_MEL_FIXED}};
+
+    bool ok_c1 = bmrt_launch_tensor_ex(runtime_, net_c1_->name,
+                                       in_c1, 2, out_c1, 1, true, false);
+    if (!ok_c1) {
+        bm_free_device(bm_handle_, in_c1[0].device_mem);
+        bm_free_device(bm_handle_, in_c1[1].device_mem);
+        bm_free_device(bm_handle_, out_c1[0].device_mem);
+        std::cerr << "[Error] Part C1 (flow) launch failed\n";
+        return res;
+    }
     bm_thread_sync(bm_handle_);
+
+    bm_free_device(bm_handle_, in_c1[0].device_mem);
+    bm_free_device(bm_handle_, in_c1[1].device_mem);
+
+    // ── C2: decoder ───────────────────────────────────────────
+    bm_tensor_t in_c2[1], out_c2[1];
+
+    // reuse out_c1[0] as input to C2
+    in_c2[0]         = out_c1[0];
+
+    int audio_out_n = T_MEL_FIXED * UPSAMPLE;
+    bm_malloc_device_byte(bm_handle_, &out_c2[0].device_mem,
+                          audio_out_n * sizeof(float));
+    out_c2[0].dtype   = BM_FLOAT32;
+    out_c2[0].st_mode = BM_STORE_1N;
+    out_c2[0].shape   = {3, {1, 1, audio_out_n}};
+
+    bool ok_c2 = bmrt_launch_tensor_ex(runtime_, net_c2_->name,
+                                       in_c2, 1, out_c2, 1, true, false);
+    if (!ok_c2) {
+        bm_free_device(bm_handle_, out_c1[0].device_mem);
+        bm_free_device(bm_handle_, out_c2[0].device_mem);
+        std::cerr << "[Error] Part C2 (decoder) launch failed\n";
+        return res;
+    }
+    bm_thread_sync(bm_handle_);
+
     auto t5 = Clock::now();
     res.part_c_ms = Ms(t5 - t4).count();
 
     std::vector<float> audio_full(audio_out_n);
-    bm_memcpy_d2s(bm_handle_, audio_full.data(), out_c[0].device_mem);
+    bm_memcpy_d2s(bm_handle_, audio_full.data(), out_c2[0].device_mem);
 
-    bm_free_device(bm_handle_, in_c[0].device_mem);
-    bm_free_device(bm_handle_, in_c[1].device_mem);
-    bm_free_device(bm_handle_, out_c[0].device_mem);
+    bm_free_device(bm_handle_, out_c1[0].device_mem);
+    bm_free_device(bm_handle_, out_c2[0].device_mem);
 
     // Trim to valid samples
     int valid_n = std::min(copy_t * UPSAMPLE, audio_out_n);
@@ -292,7 +333,7 @@ TTSResult TTSInference::run(const int64_t* tokens, const int64_t* tones, int seq
     double audio_ms = (double)valid_n * 1000.0 / SAMPLE_RATE;
     res.rtf = res.total_ms / audio_ms;
 
-    std::cout << "[PartC] TPU flow+dec=" << res.part_c_ms << "ms\n";
+    std::cout << "[PartC] TPU c1(flow)+c2(dec)=" << res.part_c_ms << "ms\n";
     std::cout << "[Timing] A=" << res.part_a_ms << "ms"
               << "  B=" << res.part_b_ms << "ms"
               << "  C=" << res.part_c_ms << "ms"
@@ -306,9 +347,9 @@ TTSResult TTSInference::run(const int64_t* tokens, const int64_t* tones, int seq
 // ─── release ─────────────────────────────────────────────────────────────────
 
 void TTSInference::release() {
-    if (runtime_a_) { bmrt_destroy(runtime_a_); runtime_a_ = nullptr; }
-    if (runtime_c_) { bmrt_destroy(runtime_c_); runtime_c_ = nullptr; }
-    if (bm_handle_) { bm_dev_free(bm_handle_); bm_handle_ = nullptr; }
+    if (runtime_)   { bmrt_destroy(runtime_);   runtime_   = nullptr; }
+    if (bm_handle_) { bm_dev_free(bm_handle_);  bm_handle_ = nullptr; }
+    net_a_ = net_c1_ = net_c2_ = nullptr;
     initialized_ = false;
 }
 

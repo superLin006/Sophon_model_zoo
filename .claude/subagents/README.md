@@ -39,6 +39,18 @@
 
 `{model}/.context/`：`baseline.md → operator_analysis.md → bmodel_info.md → perf_log.md`，主 Agent 逐级读取传递。
 
+**实际覆盖情况（2026-09-03 核查）**：11 个模型中只有 4 个具备 `.context/`——
+
+| 模型 | 已有文件 |
+|---|---|
+| moonshine | baseline / operator_analysis / bmodel_info |
+| vits-melo-tts-zh_en | baseline / operator_analysis / bmodel_info |
+| HY-MT | baseline / operator_analysis / bmodel_info |
+| Qwen3-TTS | baseline / operator_analysis / bmodel_info / plan / cp_debug_log |
+| 其余 7 个（whisper、sensevoice、zipformer、chatTTS、Eureka-Audio、QwenLLM、Qwen3-ASR） | 无 `.context/` |
+
+**`perf_log.md` 无任何模型产出**，即第 5 阶段 performance-optimizer 从未留下文件；Qwen3-TTS 的 `cp_debug_log.md` 是性能优化实战记录，但文件名不符合本表约定。因此 `.context/` 只能作为**存在时的补充材料**，不能当作全部模型的前提——`AGENTS.md` 已相应改为「若存在」。性能数据的权威来源始终是 `PERF_SUMMARY.md`。
+
 ## 配套资源（公共，各 subagent 直接使用）
 
 | 资源 | 路径 |

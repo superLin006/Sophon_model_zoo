@@ -1,16 +1,17 @@
 #!/bin/bash
 # Whisper large-v3-turbo bmodel 转换（F16）
 # turbo 维度: n_state=1280, encoder 32层, decoder 4层, n_head=20, mel=128, n_audio_ctx=1500, n_text_ctx=448
-# 在 sophon-tpumlir 容器内执行：
-#   docker exec sophon-tpumlir bash /workspace/whisper/python/gen_bmodel_turbo.sh [F16|F32]
+# 在 sophon-tpumlir-v128 容器内执行：
+#   docker exec sophon-tpumlir-v128 bash /workspace/whisper/python/gen_bmodel_turbo.sh [F16|F32]
 set -e
 
 MODEL_NAME="large-v3-turbo"
 ONNX_DIR="/workspace/whisper/models/onnx"
-WORK_DIR="/tmp/whisper_turbo_compile"
 BMODEL_DIR="/workspace/whisper/models/BM1684X"
 chip="bm1684x"
 quantize="${1:-F16}"
+WORK_DIR="/workspace/whisper/compile/tmp/turbo_${quantize}"
+OUTPUT_DIR="${WORK_DIR}/output"
 
 # turbo 维度
 n_mels=128
@@ -20,6 +21,8 @@ padding_size=448
 dec_layers=4   # turbo decoder 只有 4 层
 
 mkdir -p "${BMODEL_DIR}" "${WORK_DIR}"
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}"
 echo "=== Whisper ${MODEL_NAME} ${quantize} (n_state=${n_state}, dec_layers=${dec_layers}) ==="
 
 # W4F16/W4BF16 是 per-group 权重量化，需指定 group size（与 base 的 gen_bmodel_w4f16.sh 一致用 64）
@@ -45,7 +48,9 @@ model_deploy.py \
     ${QG} \
     --chip ${chip} \
     --disable_layer_group \
-    --model "${BMODEL_DIR}/whisper_turbo_encoder_${quantize}.bmodel"
+    --model "${OUTPUT_DIR}/whisper_turbo_encoder_${quantize}.bmodel"
+mv "${OUTPUT_DIR}/whisper_turbo_encoder_${quantize}.bmodel" \
+   "${BMODEL_DIR}/whisper_turbo_encoder_${quantize}.bmodel"
 echo "[1/2] Encoder done"
 
 # 2. Decoder：4 层 KV
@@ -69,7 +74,9 @@ model_deploy.py \
     ${QG} \
     --chip ${chip} \
     --disable_layer_group \
-    --model "${BMODEL_DIR}/whisper_turbo_decoder_${quantize}.bmodel"
+    --model "${OUTPUT_DIR}/whisper_turbo_decoder_${quantize}.bmodel"
+mv "${OUTPUT_DIR}/whisper_turbo_decoder_${quantize}.bmodel" \
+   "${BMODEL_DIR}/whisper_turbo_decoder_${quantize}.bmodel"
 echo "[2/2] Decoder done"
 
 ls -lh "${BMODEL_DIR}/whisper_turbo_"*"_${quantize}.bmodel"

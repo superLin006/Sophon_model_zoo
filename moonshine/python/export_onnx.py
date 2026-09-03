@@ -30,7 +30,7 @@ Moonshine streaming-small ONNX 导出脚本(方案 B,正式版)
     python export_onnx.py --encoder    # 只导出 encoder
     python export_onnx.py --decoder    # 只导出 decoder
 
-环境: sophon-whisper (conda), torch 2.11.0+cpu, onnx 1.21, onnxsim 0.6.3
+环境: sophon-moonshine (conda), torch 2.11.0+cpu, onnx 1.21, onnxsim 0.6.3
 """
 import argparse
 import os
@@ -260,6 +260,9 @@ def export_onnx(module, dummy_inputs, path, input_names, output_names):
 
     sim_path = path.replace(".onnx", "_sim.onnx")
     onnx.save(m2, sim_path)
+    for raw_path in (path, path + ".data"):
+        if os.path.exists(raw_path):
+            os.remove(raw_path)
     ops = Counter(n.op_type for n in m2.graph.node)
     print(f"  sim 算子({len(m2.graph.node)} 节点): {dict(sorted(ops.items()))}")
     print(f"  sim 输入: {[i.name + str([d.dim_value for d in i.type.tensor_type.shape.dim]) for i in m2.graph.input]}")

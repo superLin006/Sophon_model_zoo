@@ -16,7 +16,7 @@ Moonshine streaming-small PyTorch Baseline 测试
     python test_pytorch.py [audio.wav]     # 跑单个文件
     python test_pytorch.py                 # 自动跑 test_data/ 下所有 wav
 
-环境: sophon-whisper (conda)
+环境: sophon-moonshine (conda)
 """
 
 import json

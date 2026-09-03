@@ -85,7 +85,7 @@ LOG_K = -0.4875200987   (k = exp(log_k) ≈ 0.6141; 0.75 只是 k_init, 勿用!)
 | decoder ORT vs HF token | 27/27 一致 | 19/19 一致 |
 | decoder ORT vs HF logits | max_abs 2.3e-5 | 2.7e-5 |
 
-### 4.2 bmodel 级(板卡 172.16.25.248 实测, 0.wav, C++ bmruntime 全 27 步自回归)
+### 4.2 bmodel 级(板卡 BM1684X 实测, 0.wav, C++ bmruntime 全 27 步自回归)
 
 | 精度 | encoder vs ORT max_abs | decoder logits max_abs | token 一致率 | argmax 不一致步数 |
 |------|------------------------|------------------------|--------------|-------------------|
@@ -110,7 +110,7 @@ LOG_K = -0.4875200987   (k = exp(log_k) ≈ 0.6141; 0.75 只是 k_init, 勿用!)
 | opset 升 18 | torch 2.11/onnxsim 结果可能是 18(onnx 1.21 转换器无 Pad 17 适配器) | 导出后统一 `opset_import[0].version = 17`(LayerNormalization 需 ≥17) |
 | Split num_outputs 与 onnxsim 0.6.3 冲突 | torch chunk 导出 Split 带 num_outputs, onnxsim 崩溃 | MLP GLU 用显式 Slice `y[..., :2048] / y[..., 2048:]` |
 | HF decoder 原地修改 encoder_hidden_states | `encoder_hidden_states += pos_emb` 原地累加(28 步后 enc 被加 28 次 pos_emb) | 验证/基准每步传 `enc_out.clone()`;bmodel 纯函数无此问题 |
-| sliding window mask 边界 | MTK 与 transformers 差 1 位 | 用 transformers 语义 `(dist>=0 & dist<left) | (dist<0 & -dist<right)`, 与 HF 逐元素 0 差异 |
+| sliding window mask 边界 | 参考实现与 transformers 差 1 位 | 用 transformers 语义 `(dist>=0 & dist<left) | (dist<0 & -dist<right)`, 与 HF 逐元素 0 差异 |
 | CausalConv1d 双重 padding | HF 模块内部自带 F.pad(4,0) | wrapper 外层不重复 pad(重复输出 503 帧) |
 | int64 输入 | bmruntime 无 INT64 | TPU-MLIR 编译自动降 int32, C++ 上传 cast 到 int32(板卡实测 dtype=INT32) |
 | KV dummy 共享引用 | `[t]*n` 共享同一 tensor | 列表推导式 `[torch.zeros(...) for _ in range(n)]` |
@@ -157,5 +157,5 @@ docker run --rm \
 
 - 本地: conda `sophon-whisper`(torch 2.11.0+cpu, onnx 1.21.0, onnxsim 0.6.3, transformers 5.14.1)
 - Docker: sophgo/tpuc_dev:latest(容器内 onnx 1.14.1, 经 pip 装 tpu_mlir whl)
-- 板卡: 172.16.25.248(root/1), libsophon 0.5.1(bmrt_tensor 收 bm_shape_t 结构体, 与新版 int* 签名不同), gcc 9.3
+- 板卡: BM1684X, libsophon 0.5.1(bmrt_tensor 收 bm_shape_t 结构体, 与新版 int* 签名不同), gcc 9.3
 - 原始分析文档: `.context/operator_analysis.md`(wrapper 代码/坑/checklist)

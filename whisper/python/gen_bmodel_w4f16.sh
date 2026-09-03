@@ -1,13 +1,14 @@
 #!/bin/bash
 # Whisper base W4F16 量化试验（权重 int4 + 激活 F16）
-# 在 sophon-tpumlir 容器内执行：
-#   docker exec sophon-tpumlir bash /workspace/whisper/python/gen_bmodel_w4f16.sh
+# 在 sophon-tpumlir-v128 容器内执行：
+#   docker exec sophon-tpumlir-v128 bash /workspace/whisper/python/gen_bmodel_w4f16.sh
 set -e
 
 MODEL_NAME="base"
 ONNX_DIR="/workspace/whisper/models/onnx"
 WORK_DIR="/tmp/whisper_w4f16"
 BMODEL_DIR="/workspace/whisper/models/BM1684X"
+OUTPUT_DIR="${WORK_DIR}/output"
 chip="bm1684x"
 quantize="W4F16"
 
@@ -16,6 +17,8 @@ n_audio_ctx=1500
 padding_size=448
 
 mkdir -p "${BMODEL_DIR}" "${WORK_DIR}"
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}"
 echo "=== Whisper base ${quantize} ==="
 
 # 1. Encoder
@@ -31,7 +34,9 @@ model_deploy.py \
     --quantize ${quantize} \
     --q_group_size 64 \
     --chip ${chip} \
-    --model "${BMODEL_DIR}/whisper_${MODEL_NAME}_encoder_${quantize}.bmodel"
+    --model "${OUTPUT_DIR}/whisper_${MODEL_NAME}_encoder_${quantize}.bmodel"
+mv "${OUTPUT_DIR}/whisper_${MODEL_NAME}_encoder_${quantize}.bmodel" \
+   "${BMODEL_DIR}/whisper_${MODEL_NAME}_encoder_${quantize}.bmodel"
 echo "[1/2] Encoder done"
 
 # 2. Decoder
@@ -54,7 +59,9 @@ model_deploy.py \
     --q_group_size 64 \
     --chip ${chip} \
     --disable_layer_group \
-    --model "${BMODEL_DIR}/whisper_${MODEL_NAME}_decoder_${quantize}.bmodel"
+    --model "${OUTPUT_DIR}/whisper_${MODEL_NAME}_decoder_${quantize}.bmodel"
+mv "${OUTPUT_DIR}/whisper_${MODEL_NAME}_decoder_${quantize}.bmodel" \
+   "${BMODEL_DIR}/whisper_${MODEL_NAME}_decoder_${quantize}.bmodel"
 echo "[2/2] Decoder done"
 
 ls -lh "${BMODEL_DIR}/whisper_${MODEL_NAME}_"*"_${quantize}.bmodel"

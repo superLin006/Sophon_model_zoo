@@ -3,7 +3,7 @@
 //
 // 单文件 bmodel（encoder + LLM 合并）：
 //   ./qwen3_asr_bm1684x \
-//     --bmodel        models/BM1684X/qwen3_asr_merged_w4g64.bmodel \
+//     --bmodel        models/BM1684X/qwen3_asr_merged_w4f16.bmodel \
 //     --model_dir     . --audio test_data/test_zh.wav
 //
 // 批量目录（bmodel 只加载一次，循环推理）：

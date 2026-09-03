@@ -1,5 +1,5 @@
 {
-  "model_path": "/home/xh/itc_project/Sophon_model_zoo/vits-melo-tts-zh_en/models/onnx/vits-melo-tts-zh_en/model.onnx",
+  "model_path": "models/onnx/vits-melo-tts-zh_en/model.onnx",
   "onnxruntime_version": "1.23.2",
   "sample_rate": 44100,
   "speaker_id": 1,
@@ -160,7 +160,7 @@
       "n_samples": 118784,
       "duration_sec": 2.694,
       "sample_rate": 44100,
-      "wav_path": "/home/xh/itc_project/Sophon_model_zoo/vits-melo-tts-zh_en/python/test/outputs/baseline/test_zh.wav"
+      "wav_path": "python/test/outputs/baseline/test_zh.wav"
     },
     {
       "name": "test_en_zh",
@@ -284,7 +284,7 @@
       "n_samples": 114176,
       "duration_sec": 2.589,
       "sample_rate": 44100,
-      "wav_path": "/home/xh/itc_project/Sophon_model_zoo/vits-melo-tts-zh_en/python/test/outputs/baseline/test_en_zh.wav"
+      "wav_path": "python/test/outputs/baseline/test_en_zh.wav"
     }
   ]
 }
