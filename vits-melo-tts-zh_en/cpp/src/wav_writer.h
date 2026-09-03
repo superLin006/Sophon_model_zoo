@@ -5,7 +5,7 @@
 #include <cmath>
 #include <algorithm>
 
-inline void write_wav(const char* path, const float* data, int n_samples, int sample_rate = 44100) {
+inline bool write_wav(const char* path, const float* data, int n_samples, int sample_rate = 44100) {
     int16_t* pcm = new int16_t[n_samples];
     for (int i = 0; i < n_samples; i++) {
         float v = data[i];
@@ -16,7 +16,7 @@ inline void write_wav(const char* path, const float* data, int n_samples, int sa
     FILE* f = fopen(path, "wb");
     if (!f) {
         delete[] pcm;
-        return;
+        return false;
     }
     // WAV header
     int data_bytes = n_samples * 2;
@@ -34,7 +34,9 @@ inline void write_wav(const char* path, const float* data, int n_samples, int sa
     int16_t bits       = 16;      fwrite(&bits,        2, 1, f);
     fwrite("data", 1, 4, f);
     fwrite(&data_bytes, 4, 1, f);
-    fwrite(pcm, 2, n_samples, f);
+    size_t written = fwrite(pcm, 2, n_samples, f);
+    bool ok = written == static_cast<size_t>(n_samples);
     fclose(f);
     delete[] pcm;
+    return ok;
 }

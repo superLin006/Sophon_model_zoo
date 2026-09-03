@@ -16,23 +16,23 @@ make_split_models.py  -- 三段式拆分，最大化 TPU 利用率
       → z_p[1,192,T_mel], y_mask[1,1,T_mel]
 
   Part C1 (TPU, Flow):
-      z_p[1,192,T_fixed], y_mask[1,1,T_fixed]
-      → flow output [1,192,T_fixed]
+      z_p[1,192,1024], y_mask[1,1,1024]
+      → flow output [1,192,1024]
   Part C2 (TPU, Decoder):
-      flow output [1,192,T_fixed]
-      → audio[1,1,T_fixed*512]
+      flow output [1,192,1024]
+      → audio[1,1,524288]
 
-  注意: T_MEL_FIXED=512 是当前 BM1684X C++ 运行时约定。
+  注意: T_MEL_FIXED=1024 是当前 BM1684X C++ 运行时约定。
 
 用法: python python/make_split_models.py
       (从项目根目录运行)
 """
 
 import os
+from copy import deepcopy
 import numpy as np
 import onnx
-from onnx import shape_inference
-from onnx.utils import extract_model
+from onnx import shape_inference, helper, TensorProto
 from onnxsim import simplify
 import onnxruntime as ort
 
@@ -43,8 +43,65 @@ OUT_A    = os.path.join(PROJ, 'models/onnx/vits-melo-tts-zh_en/part_a_encoder.on
 OUT_C1   = os.path.join(PROJ, 'models/onnx/vits-melo-tts-zh_en/part_c1_flow.onnx')
 OUT_C2   = os.path.join(PROJ, 'models/onnx/vits-melo-tts-zh_en/part_c2_decoder.onnx')
 
-L_FIXED     = 128
-T_MEL_FIXED = 512
+L_FIXED     = 256
+T_MEL_FIXED = 1024
+
+
+def extract_subgraph(model, input_shapes, output_shapes, output_names, path, input_types=None):
+    input_types = input_types or {}
+    producers = {}
+    for node in model.graph.node:
+        for output in node.output:
+            producers[output] = node
+
+    selected = []
+    selected_ids = set()
+    boundary = set(input_shapes)
+
+    def visit(value):
+        if value in boundary:
+            return
+        node = producers.get(value)
+        if node is None or id(node) in selected_ids:
+            return
+        for inp in node.input:
+            if inp:
+                visit(inp)
+        selected_ids.add(id(node))
+        selected.append(node)
+
+    for output in output_names:
+        visit(output)
+
+    initializer_map = {item.name: item for item in model.graph.initializer}
+    used_inputs = {inp for node in selected for inp in node.input if inp}
+    initializers = [
+        deepcopy(initializer_map[name])
+        for name in used_inputs
+        if name in initializer_map and name not in boundary
+    ]
+    inputs = [
+        helper.make_tensor_value_info(
+            name, input_types.get(name, TensorProto.FLOAT), shape)
+        for name, shape in input_shapes.items()
+    ]
+    outputs = [
+        helper.make_tensor_value_info(name, TensorProto.FLOAT, output_shapes[name])
+        for name in output_names
+    ]
+    graph = helper.make_graph(
+        [deepcopy(node) for node in selected],
+        f"{model.graph.name}_subgraph",
+        inputs,
+        outputs,
+        initializer=initializers,
+    )
+    subgraph = helper.make_model(graph, producer_name="Sophon Model Zoo")
+    subgraph.opset_import.clear()
+    subgraph.opset_import.extend(deepcopy(item) for item in model.opset_import)
+    subgraph.ir_version = model.ir_version
+    onnx.checker.check_model(subgraph)
+    onnx.save(subgraph, path)
 
 
 def main():
@@ -60,14 +117,24 @@ def main():
     # ── Part A ──────────────────────────────────────
     print('\n=== Part A (enc_p + dp) ===')
     part_a_outputs = [
-        '/dp/Mul_3_output_0',                # dp_w  [1,1,128]
-        '/enc_p/Split_output_0',              # h     [1,192,128]
-        '/enc_p/encoder/Unsqueeze_output_0',  # attn_mask [1,1,1,128]
-        '/enc_p/Cast_1_output_0',             # x_mask    [1,1,128]
+        '/dp/Mul_3_output_0',                # dp_w  [1,1,256]
+        '/enc_p/Split_output_0',              # h     [1,192,256]
+        '/enc_p/encoder/Unsqueeze_output_0',  # attn_mask [1,1,1,256]
+        '/enc_p/Cast_1_output_0',             # x_mask    [1,1,256]
     ]
-    extract_model(tmp_si, OUT_A,
-        input_names=['x', 'x_lengths', 'tones'],
-        output_names=part_a_outputs)
+    extract_subgraph(
+        m_si,
+        {'x': [1, L_FIXED], 'x_lengths': [1], 'tones': [1, L_FIXED]},
+        {
+            part_a_outputs[0]: [1, 1, L_FIXED],
+            part_a_outputs[1]: [1, 192, L_FIXED],
+            part_a_outputs[2]: [1, 1, 1, L_FIXED],
+            part_a_outputs[3]: [1, 1, L_FIXED],
+        },
+        part_a_outputs,
+        OUT_A,
+        {'x': TensorProto.INT64, 'x_lengths': TensorProto.INT64, 'tones': TensorProto.INT64},
+    )
 
     sess_a = ort.InferenceSession(OUT_A)
     x  = np.zeros((1, L_FIXED), dtype=np.int64); x[0, :10] = 1
@@ -84,14 +151,21 @@ def main():
 
     # ── Part C1 (Flow) ──────────────────────────────────
     print(f'\n=== Part C1 (Flow, T_mel_fixed={T_MEL_FIXED}) ===')
-    extract_model(tmp_si, OUT_C1,
-        input_names=['/Transpose_3_output_0', '/Cast_4_output_0'],
-        output_names=['/Mul_10_output_0'])
+    extract_subgraph(
+        m_si,
+        {
+            '/Transpose_3_output_0': [1, 192, T_MEL_FIXED],
+            '/Cast_2_output_0': [1, 1, T_MEL_FIXED],
+        },
+        {'/Mul_10_output_0': [1, 192, T_MEL_FIXED]},
+        ['/Mul_10_output_0'],
+        OUT_C1,
+    )
 
     mc1 = onnx.load(OUT_C1)
     mc1_sim, ok = simplify(mc1, overwrite_input_shapes={
         '/Transpose_3_output_0': [1, 192, T_MEL_FIXED],
-        '/Cast_4_output_0':      [1, 1, T_MEL_FIXED],
+        '/Cast_2_output_0':      [1, 1, T_MEL_FIXED],
     }, perform_optimization=True)
     if ok:
         mc1 = mc1_sim
@@ -99,9 +173,13 @@ def main():
 
     # ── Part C2 (Decoder) ──────────────────────────────
     print(f'\n=== Part C2 (Decoder, T_mel_fixed={T_MEL_FIXED}) ===')
-    extract_model(tmp_si, OUT_C2,
-        input_names=['/Mul_10_output_0'],
-        output_names=['y'])
+    extract_subgraph(
+        m_si,
+        {'/Mul_10_output_0': [1, 192, T_MEL_FIXED]},
+        {'y': [1, 1, T_MEL_FIXED * 512]},
+        ['y'],
+        OUT_C2,
+    )
 
     mc2 = onnx.load(OUT_C2)
     mc2_sim, ok = simplify(mc2, overwrite_input_shapes={
@@ -115,7 +193,7 @@ def main():
     zp = np.random.randn(1, 192, T_MEL_FIXED).astype(np.float32)
     mask = np.ones((1, 1, T_MEL_FIXED), dtype=np.float32)
     out_c1 = ort.InferenceSession(OUT_C1).run(
-        None, {'/Transpose_3_output_0': zp, '/Cast_4_output_0': mask})[0]
+        None, {'/Transpose_3_output_0': zp, '/Cast_2_output_0': mask})[0]
     out_c2 = ort.InferenceSession(OUT_C2).run(
         None, {'/Mul_10_output_0': out_c1})[0]
     print(f'  C1 output: {out_c1.shape}; C2 output: {out_c2.shape}')

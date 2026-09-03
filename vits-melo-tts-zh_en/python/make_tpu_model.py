@@ -47,8 +47,8 @@ def main():
 
     # ── 修改 1: SDP 输出替换为全零 ──────────────────
     # /sdp/Split_output_0 [1,1,L] -> /Mul_2 * constant -> /Mul_2_output_0
-    # 把 /Mul_2_output_0 替换为零常量, shape [1,1,128]
-    L_FIXED = 128
+    # 把 /Mul_2_output_0 替换为零常量, shape [1,1,256]
+    L_FIXED = 256
     sdp_zero_name = 'sdp_zero_const'
     sdp_zero_init = make_zero_initializer(sdp_zero_name, [1, 1, L_FIXED])
     graph.initializer.append(sdp_zero_init)
@@ -119,7 +119,7 @@ def main():
     print('\nRunning onnxsim (constant folding + dead node elimination)...')
     try:
         from onnxsim import simplify
-        # 固定 L=128 做 shape inference
+        # 固定 L=256 做 shape inference
         input_shapes = {
             'x':           [1, L_FIXED],
             'x_lengths':   [1],
@@ -162,10 +162,10 @@ def main():
         print('\n✅ 模型已准备好，可以编译 bmodel')
         print(f'\n下一步:')
         print(f'  model_transform.py \\')
-        print(f'    --model_name vits_melo_tts_L128 \\')
+        print(f'    --model_name vits_melo_tts_L256 \\')
         print(f'    --model_def {OUT_ONNX} \\')
-        print(f'    --input_shapes [[1,128],[1],[1,128],[1],[1]] \\')
-        print(f'    --mlir vits_melo_tts_L128.mlir')
+        print(f'    --input_shapes [[1,256],[1],[1,256],[1],[1]] \\')
+        print(f'    --mlir vits_melo_tts_L256.mlir')
     else:
         print(f'\n⚠️  仍有不支持算子，需要进一步处理')
 

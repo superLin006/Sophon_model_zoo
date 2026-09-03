@@ -13,7 +13,7 @@ Sophon BM1684X 平台深度学习模型移植工作区，基于 SDK-23.09 LTS SP
 | [Moonshine](moonshine/README.md) | 语音识别（轻量流式 ASR，streaming-small） | **F16** | RTF 0.045，296ms（6.6s 音频，27 decode 步）；10s 固定输入，超长按需切段 | ✅ 完成 |
 | [Zipformer](zipformer/README.md) | 流式中英双语语音识别（Transducer） | **F16** | warm RTF 0.0410、首轮 0.0636–0.2264；8/8 token 序列与 Python Sail 完全一致 | ✅ 完成 |
 | [ChatTTS](chatTTS/README.md) | 文本转语音（自回归 GPT + DVAE + Vocos） | GPT **INT4** + decoder/vocos **BF16** | RTF 0.533（非流式）/ 0.59（流式），TTFA ~980ms，70/70 RTF<1 | ✅ 完成 |
-| [VITS-MeloTTS](vits-melo-tts-zh_en/README.md) | 文本转语音（中英双语，三段式） | **F16** | RTF ~0.12（Part A 6ms + MAS 8ms + Part C 305ms）；仅 2 条 smoke，未做批量回归 | ✅ 跑通（无批量回归） |
+| [VITS-MeloTTS](vits-melo-tts-zh_en/README.md) | 文本转语音（中英双语，L=256 / T_mel=1024 三段式） | **F16** | 中文 256 token：RTF 0.0278（10.83s）；中英混合 256 token：RTF 0.0267（11.60s） | ✅ L=256 长文本通过 |
 | [Eureka-Audio](Eureka-Audio/README.md) | 音频指令分类（whisper encoder + Qwen3-1.7B，端到端） | whisper **F16** + qwen3 **W4BF16** | 端到端 ~2.3s/条；准确率 **5-6/9**（ChatTTS 长指令集，与原版 PyTorch GPU 基线持平） | ⚠️ **bmodel 产物在，运行时资产与源权重已缺失，当前不可部署、不可复现** |
 | [QwenLLM](QwenLLM/README.md) | LLM 意图识别（Qwen3-0.6B dispatch，v95 系列） | **W8BF16** / seq2048 | v95e-soup 为交付候选：prefill ~485ms、decode ~45 tok/s（2026-09-03 板卡） | ✅ 完成 |
 | [Qwen3-ASR](Qwen3-ASR/README.md) | 语音识别 + 语种识别（30 语种 + 22 中文方言，LLM 类） | **W4F16 g64** 单文件 646MB（W8BF16 942MB 为精度基线） | 13/13 有效多语种音频；RTF 中位数 0.128（W8BF16 0.161）；decode 64–65 tok/s；流式 Final 与离线逐字一致 | ✅ 完成 |

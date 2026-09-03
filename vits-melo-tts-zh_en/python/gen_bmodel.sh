@@ -6,7 +6,7 @@
 #
 # 前提：已准备 models/onnx/vits-melo-tts-zh_en/ 下的三段 ONNX
 
-# 注意: T_MEL_FIXED=512 与 C++ 运行时及拆分 ONNX 的固定形状保持一致
+# 注意: T_MEL_FIXED=1024 与 C++ 运行时及拆分 ONNX 的固定形状保持一致
 
 set -e
 
@@ -16,9 +16,9 @@ ONNX_DIR="${MODEL_ROOT}/models/onnx/vits-melo-tts-zh_en"
 BMODEL_DIR="${MODEL_ROOT}/models/BM1684X"
 WORK_DIR="${MODEL_ROOT}/compile/tmp/vits_${QUANTIZE}"
 CHIP="bm1684x"
-L_MAX=128
+L_MAX=256
 Z_DIM=192
-T_MEL_FIXED=512
+T_MEL_FIXED=1024
 
 PART_A_MODEL="${WORK_DIR}/vits_part_a_${QUANTIZE}.bmodel"
 PART_C1_MODEL="${WORK_DIR}/vits_part_c1_${QUANTIZE}.bmodel"

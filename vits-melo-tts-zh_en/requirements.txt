@@ -2,11 +2,13 @@
 # 新建环境：
 #   conda create -n sophon-vits-melo-tts-zh-en python=3.10 -y
 #   conda run -n sophon-vits-melo-tts-zh-en python -m pip install -r requirements.txt
-# 说明：本模型**不做** PyTorch→ONNX 导出（原始 ONNX 来自上游 sherpa-onnx/MeloTTS，
-#       见 python/README.md）。本 requirements 仅覆盖 make_tpu_model.py /
-#       make_split_models.py / test_onnx.py 处理三段拆分 ONNX 所需，无需 torch。
+# 说明：本文件覆盖 ONNX 导出后处理、三段拆分和 ONNX 验证。
+# export_onnx.py 还需要与上游 MeloTTS 源码匹配的 PyTorch 依赖，详见 python/README.md；
+# 该上游依赖不参与 make_tpu_model.py / make_split_models.py / test_onnx.py。
 onnx==1.21.0
 onnxruntime==1.23.2
 onnxsim==0.6.3
 numpy==2.2.6
+scipy==1.15.3
 soundfile==0.13.1
+jieba==0.42.1

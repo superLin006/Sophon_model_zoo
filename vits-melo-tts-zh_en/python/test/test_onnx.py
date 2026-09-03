@@ -4,15 +4,15 @@ vits-melo-tts-zh_en ONNX 验证（当前三段式 scheme）
 ==============================================
 验证 models/onnx/vits-melo-tts-zh_en/ 下三段拆分 ONNX 的结构完整性 + ORT 可执行性：
 
-  part_a_encoder.onnx  : x[1,L] + x_lengths[1] + tones[1,L]
-                         → dp_w[1,1,L]、h[1,192,L]、attn_mask[1,1,1,L]、x_mask[1,1,L]
-  part_c1_flow.onnx    : z_p[1,192,T_mel] + y_mask[1,1,1] → flow 输出
-  part_c2_decoder.onnx : flow 输出 → audio[1,1,T_audio_fixed]
+  part_a_encoder.onnx  : x[1,256] + x_lengths[1] + tones[1,256]
+                         → dp_w[1,1,256]、h[1,192,256]、attn_mask[1,1,1,256]、x_mask[1,1,256]
+  part_c1_flow.onnx    : z_p[1,192,1024] + y_mask[1,1,1024] → flow 输出
+  part_c2_decoder.onnx : flow 输出 [1,192,1024] → audio[1,1,524288]
 
 历史说明：旧 test_onnx.py 引用已废弃的 model.onnx / decoder_T256.onnx（方案 D，整图无法编译
 ——含 SDP 的 NonZero×21、Flow 的 RandomNormalLike、动态 T_mel）。当前为三段式拆分方案，
 产出的 3 个 onnx 由 make_tpu_model.py / make_split_models.py 生成，经本脚本做 shape/数值
-可执行冒烟；端到端精度由 C++ 板卡（RTF 0.12）与 TTS 试听验证。
+可执行冒烟；端到端精度由 C++ 板卡的中英文 256 token 实测与 TTS 试听验证。
 
 原始 model.onnx 来自上游 sherpa-onnx 对 MeloTTS 的导出（见 python/README.md），不在仓库内。
 
@@ -59,8 +59,8 @@ def _check(path, feeds):
 
 
 def main():
-    L = 128
-    T_STEP = 1       # part_c 是逐帧解码：onnx 静态输入 [1,192,1]（运行时 C++ 按 T_mel 循环 256 帧）
+    L = 256
+    T_MEL_FIXED = 1024
     all_ok = True
 
     a = _check(
@@ -75,16 +75,16 @@ def main():
     c1 = _check(
         os.path.join(ONNX_DIR, "part_c1_flow.onnx"),
         {
-            "/Transpose_3_output_0": np.zeros((1, 192, T_STEP), np.float32),
-            "/Cast_4_output_0": np.ones((1, 1, 1), np.float32),
+            "/Transpose_3_output_0": np.zeros((1, 192, T_MEL_FIXED), np.float32),
+            "/Cast_2_output_0": np.ones((1, 1, T_MEL_FIXED), np.float32),
         },
     )
 
-    # part_c2 输入是 part_c1 的 flow 输出，形状 [1,192,1]
+    # part_c2 输入是 part_c1 的 flow 输出，形状 [1,192,T_MEL_FIXED]
     c2 = _check(
         os.path.join(ONNX_DIR, "part_c2_decoder.onnx"),
         {
-            "/Mul_10_output_0": np.zeros((1, 192, T_STEP), np.float32),
+            "/Mul_10_output_0": np.zeros((1, 192, T_MEL_FIXED), np.float32),
         },
     )
 

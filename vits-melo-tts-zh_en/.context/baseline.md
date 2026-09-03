@@ -1,20 +1,20 @@
 # Baseline 测试结果
 
+> 本文件中的 baseline 数值是在原始 `model.onnx` 可用时记录的历史参考；当前仓库不归档该单体文件，交付回归以三段 ONNX 和 BM1684X C++ 端到端结果为准。
+
 ## 模型信息
 - 模型名称: vits-melo-tts-zh_en
-- 模型路径: models/onnx/vits-melo-tts-zh_en/model.onnx
-- 模型类型: VITS-MeloTTS TTS（端到端 text-to-speech，中英混合单说话人）
+- 模型路径: 原始 `model.onnx` 未随仓库归档；当前交付输入为 `models/onnx/vits-melo-tts-zh_en/` 下三段 ONNX
+- 模型类型: VITS-MeloTTS TTS（中英混合单说话人）
 - 模型来源: sherpa-onnx 预转换 ONNX（无需从 PyTorch 导出）
-- 输入数量: 7
-  - x: ['N', 'L'] int64（音素 token ids，N=batch, L=序列长度）
-  - x_lengths: ['N'] int64（序列长度，值等于 L）
-  - tones: ['N', 'L'] int64（声调 ids）
-  - sid: [1] int64（固定值 1，从模型 metadata 读取）
-  - noise_scale: [1] float32（默认 0.667）
-  - length_scale: [1] float32（默认 1.0，1/speed）
-  - noise_scale_w: [1] float32（默认 0.8）
-- 输出: y，shape ['N', 1, 'T'] float32，采样率 44100Hz
-- 模型大小: 163MB（model.onnx）
+- 输入数量: Part A 为 3 个
+  - x: [1, 128] int64（音素 token ids，padding 到固定长度）
+  - x_lengths: [1] int64（实际序列长度）
+  - tones: [1, 128] int64（声调 ids，padding 到固定长度）
+- Part A 输出: dp_w、h、attn_mask、x_mask
+- Part C1 输入: z_p [1,192,512]、y_mask [1,1,512]
+- Part C2 输出: y [1,1,262144]，采样率 44100Hz
+- 模型大小: 当前交付为 99MB（三段 F16 bmodel）
 
 ## 模型 Metadata（onnxruntime 读取）
 ```
@@ -77,7 +77,7 @@ test t eh s t 7 9 7 7
 原始音素数：test_zh=30，test_en_zh=26。
 
 ## 环境信息
-- Conda 环境: sophon-vitsMeloTTS
+- Conda 环境: sophon-vits-melo-tts-zh-en
 - Python 版本: 3.10.20
 - onnxruntime 版本: 1.23.2
 - jieba 版本: 0.42.1
@@ -92,16 +92,15 @@ test t eh s t 7 9 7 7
 
 ## 关键 Sophon BM1684X 移植注意事项
 
-### 动态 Shape 处理
-- TPU 不支持动态 shape：x 和 tones 的 L 维度（序列长度）必须编译时固定
-- 建议静态 shape：N=1，L 固定为 128 或 256
-- 超长输入需截断，短输入需 padding（用 token_id=0 即 blank）
-- 需要为不同长度分别编译 bmodel，或选取代表性最大长度
+### 静态 Shape 处理
+- Part A 固定为 `N=1, L=128`，短输入由 C++ 用 token/tone 0 padding，并单独传入实际 `x_lengths`
+- Part C1/C2 固定为 `T_mel=512`，C++ 将 CPU MAS 结果 padding 到 512；超过上限时在进入 TPU 前截断
+- `seq_len` 支持范围为 1~128；超长文本应在前端分句后分别合成，不能直接传入单次推理
 
 ### 输入准备（CPU 侧）
-- x 和 tones：需 pad/截断到固定长度 L
-- x_lengths：仍然传原始长度（非 padding 后长度）
-- sid/noise_scale/length_scale/noise_scale_w：标量，直接准备
+- x 和 tones：需 pad 到 `[1,128]`
+- x_lengths：传实际序列长度，范围 1~128
+- Part C 的 `y_mask`：有效 mel 帧为 1，padding 帧为 0
 
 ### 模型结构特点
 - 无 BERT 特征依赖（sherpa-onnx 版本已将 bert/ja_bert 固定为零向量，导出时已 hardcode）
@@ -114,14 +113,13 @@ test t eh s t 7 9 7 7
 - tone 范围：0~10（0 为标点/blank，1~5 中文，7~10 英文）
 - 音频输出范围：大致 [-1, 1] float32
 
-### 推荐编译参数（待验证）
-```bash
-# F32 版本（基准）
-model_deploy --model model.onnx --quantize F32 --chip bm1684x \
-  --input_shapes [1,128],[1],[1,128],[1],[1],[1],[1] --output model_F32.bmodel
+### 当前编译入口
+请使用仓库内脚本生成三段 F16/F32 bmodel；不要直接对原始 `model.onnx` 执行 `model_deploy`。原始 ONNX 含动态时长和 TPU-MLIR 不支持的算子，必须先按 `python/README.md` 执行三段拆分：
 
-# F16 版本
-model_deploy --model model.onnx --quantize F16 --chip bm1684x \
-  --input_shapes [1,128],[1],[1,128],[1],[1],[1],[1] --output model_F16.bmodel
+```bash
+conda run -n sophon-vits-melo-tts-zh-en python vits-melo-tts-zh_en/python/make_tpu_model.py
+conda run -n sophon-vits-melo-tts-zh-en python vits-melo-tts-zh_en/python/make_split_models.py
+docker exec sophon-tpumlir-v128 bash /workspace/vits-melo-tts-zh_en/python/gen_bmodel.sh F16
 ```
-注意：x_lengths shape 为 [1]（非 [1,1]），sid/noise_scale 等均为 [1]。
+
+C++ 端的 `sid` 已固化在 Part A/C 的模型路径中，不再作为 bmodel 输入。

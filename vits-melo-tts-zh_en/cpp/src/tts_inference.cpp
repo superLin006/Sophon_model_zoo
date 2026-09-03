@@ -35,8 +35,18 @@ static const bm_net_info_t* load_bmodel_into(void* runtime, const std::string& p
     // The most recently loaded network is appended last.
     const char** names = nullptr;
     bmrt_get_network_names(runtime, &names);
+    if (!names || !names[net_count - 1]) {
+        std::cerr << "[Error] Cannot get network name: " << path << "\n";
+        free(names);
+        return nullptr;
+    }
     const char* last_name = names[net_count - 1];
     const bm_net_info_t* info = bmrt_get_network_info(runtime, last_name);
+    if (!info) {
+        std::cerr << "[Error] Cannot get network info: " << last_name << "\n";
+        free(names);
+        return nullptr;
+    }
     std::cout << "[Init] Loaded " << path << "  net=" << last_name << "\n";
     free(names);
     return info;
@@ -55,15 +65,22 @@ int TTSInference::init(const char* model_dir, const char* precision) {
     // One shared runtime — all three bmodels share the same TPU DDR allocator,
     // preventing address conflicts that occur when using separate runtimes.
     runtime_ = bmrt_create(bm_handle_);
-    if (!runtime_) { std::cerr << "[Error] bmrt_create failed\n"; return -1; }
+    if (!runtime_) {
+        std::cerr << "[Error] bmrt_create failed\n";
+        release();
+        return -1;
+    }
 
     std::string path_a  = base + "/vits_part_a_"  + prec + ".bmodel";
     std::string path_c1 = base + "/vits_part_c1_" + prec + ".bmodel";
     std::string path_c2 = base + "/vits_part_c2_" + prec + ".bmodel";
 
-    net_a_  = load_bmodel_into(runtime_, path_a);   if (!net_a_)  return -1;
-    net_c1_ = load_bmodel_into(runtime_, path_c1);  if (!net_c1_) return -1;
-    net_c2_ = load_bmodel_into(runtime_, path_c2);  if (!net_c2_) return -1;
+    net_a_ = load_bmodel_into(runtime_, path_a);
+    if (!net_a_) { release(); return -1; }
+    net_c1_ = load_bmodel_into(runtime_, path_c1);
+    if (!net_c1_) { release(); return -1; }
+    net_c2_ = load_bmodel_into(runtime_, path_c2);
+    if (!net_c2_) { release(); return -1; }
 
     initialized_ = true;
     return 0;
@@ -89,19 +106,33 @@ static void mas_cpu(const float* dp_w,   // [1,1,L]
                     const float* x_mask, // [1,1,L]
                     int   L,
                     float length_scale,
+                    int   max_t_mel,
                     // outputs
                     std::vector<float>& attn,   // [1,1,T_mel,L]
-                    int& T_mel) {
+                    int& T_mel,
+                    bool& truncated) {
     // Compute per-phoneme integer duration
     std::vector<int> dur(L);
     for (int i = 0; i < L; ++i) {
         float mask = x_mask[i];  // x_mask [1,1,L] row-major, index i
         float w    = std::exp(dp_w[i]) * length_scale * mask;
-        dur[i]     = std::max(0, (int)std::ceil(w));
+        if (!std::isfinite(w) || w >= max_t_mel) {
+            dur[i] = max_t_mel;
+        } else {
+            dur[i] = std::max(0, (int)std::ceil(w));
+        }
     }
 
     T_mel = 0;
-    for (int i = 0; i < L; ++i) T_mel += dur[i];
+    truncated = false;
+    for (int i = 0; i < L; ++i) {
+        if (dur[i] > max_t_mel - T_mel) {
+            T_mel = max_t_mel;
+            truncated = true;
+            break;
+        }
+        T_mel += dur[i];
+    }
     if (T_mel <= 0) T_mel = 1;
 
     // Build attention matrix [1,1,T_mel,L]: row t has 1 at the phoneme mapped to frame t
@@ -139,6 +170,11 @@ static void matmul_ht(const float* h, int h_stride,
 TTSResult TTSInference::run(const int64_t* tokens, const int64_t* tones, int seq_len) {
     TTSResult res{};
     if (!initialized_) { std::cerr << "[Error] Not initialized\n"; return res; }
+    if (!tokens || !tones || seq_len <= 0 || seq_len > L_MAX) {
+        std::cerr << "[Error] Invalid input: seq_len=" << seq_len
+                  << ", expected [1, " << L_MAX << "]\n";
+        return res;
+    }
 
     const float length_scale = 1.0f;  // speed: 1.0 = normal
 
@@ -218,9 +254,10 @@ TTSResult TTSInference::run(const int64_t* tokens, const int64_t* tones, int seq
 
     std::vector<float> attn_vec;
     int T_mel_actual = 0;
-    // dp_w layout: [1,1,L] - x_mask layout: [1,1,L]
+    bool truncated = false;
+    // The decoder is compiled for T_MEL_FIXED; cap before allocating host buffers.
     mas_cpu(dp_w.data(), x_mask_buf.data(), seq_len, length_scale,
-            attn_vec, T_mel_actual);
+            T_MEL_FIXED, attn_vec, T_mel_actual, truncated);
 
     // z_p = h @ attn^T  ([Z_DIM,L] x [T_mel,L]^T -> [Z_DIM,T_mel])
     std::vector<float> z_p(Z_DIM * T_mel_actual);
@@ -232,6 +269,10 @@ TTSResult TTSInference::run(const int64_t* tokens, const int64_t* tones, int seq
 
     std::cout << "[PartB] CPU MAS  T_mel=" << T_mel_actual
               << "  time=" << res.part_b_ms << "ms\n";
+    if (truncated) {
+        std::cerr << "[Warn] T_mel exceeded " << T_MEL_FIXED
+                  << " frames; output was truncated\n";
+    }
 
     // =========================================================
     // Part C1: TPU flow  z_p[1,192,T_MEL_FIXED] + y_mask[1,1,T_MEL_FIXED]

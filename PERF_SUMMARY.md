@@ -58,7 +58,7 @@
 | 模型 | 精度 | 产物大小 | RTF（非流式） | RTF（流式） | TTFA | 数据集 / 用例 | 测试日期 |
 |---|---|---|---|---|---|---|---|
 | **ChatTTS** | GPT **INT4** + decoder/vocos **BF16** | 240MB（gpt 154M + dec 55M + vocos 31M） | **0.533** | 0.59 | ~980ms | 70 条（25 中短 + 25 英短 + 10 中长 + 10 英长），**70/70 RTF<1** | 见 `chatTTS/cpp/README.md` |
-| **VITS-MeloTTS 中英双语** | **F16** | 99MB（part_a 19M + part_c1 48M + part_c2 33M） | **~0.12** | — | — | 2 条 smoke（中文 61 token / 中英混 53 token） | 见 `vits-melo-tts-zh_en/python/README.md:97` |
+| **VITS-MeloTTS 中英双语** | **F16** | 107MB（part_a 20M + part_c1 52M + part_c2 33M） | **中文 0.0278 / 中英混合 0.0267** | — | — | L=256 单次推理；中文 10.832s / 中英混合 11.598s；两条均 PASS | 2026-09-03 |
 | **Qwen3-TTS-12Hz-0.6B** | talker **W8BF16** + CP F32（cache F16） + codec F16 | 2.56GB 三文件（talker 1.5G + cp 696M + codec 235M） | **加权 RTF 1.900** | — | — | 54 条 batch，**54/54 成功**，模型常驻，seed 42 | 2026-08-17 |
 | Qwen3-TTS-12Hz-0.6B | talker **W4F16 g64** + CP/codec 同上 | 2.12GB 三文件（talker 1.14G） | **加权 RTF 1.818** | — | — | 同上，**54/54 成功**；talker 体积 -27.8%、三文件 -17.2% | 2026-08-17 |
 
@@ -82,7 +82,7 @@
   **克隆条件是成对的**：参考音频的 DVAE 音频码（`spk_smp`）必须配该音频的逐字转写（`txt_smp`）。只给音频码时模型把参考语音当成"已说完"而提前 EOS——实测同一段参考，转写留空只出 0~0.6s 无声/半句音频，补上转写后正常出 4.2s。生产化时相似度阈值必须连同"参考音频需 ASR 转写"这一前置条件一起交付。
   
   **能力边界**：Python/SAIL 支持直接读取参考音频并编码 prompt；C++ 侧支持加载预计算音频 prompt（`--voice-prompt` + `--ref-text`）；sherpa-onnx 交付路径仍只支持固定音色向量 `spk_emb`。
-- **VITS-MeloTTS 的 0.12 拆解**：Part A（TPU 6ms）→ MAS 对齐（CPU 8ms）→ Part C（TPU 305ms），合计 319ms。仓库内只有 F16 三件产物，无 F32 bmodel；根 README 旧版标注「FP32」已更正。该模型只跑过 2 条 smoke，**未做批量回归**，0.12 属单链路实测而非统计值。
+- **VITS-MeloTTS 当前交付为 L=256 / T_mel=1024**：Part A（TPU 3.9ms）→ MAS 对齐（CPU，256 token 为 127.5ms）→ Part C（TPU 169.3ms）。中文 256 token 生成 10.832s 音频、总耗时 300.8ms、RTF 0.0278；中英混合 256 token 生成 11.598s、总耗时 309.9ms、RTF 0.0267；两条均为单次板卡端到端 PASS。
 - **Qwen3-TTS 的「54 条」= `test_outputs/batch_verify.txt`(14 行) + `test_outputs/batch_verify_54.txt`(40 行) 的并集**，两文件零重叠、合计去重正好 54 行。旧文档从未说明这一点，导致「54 条」看起来无法复现。
 - **Qwen3-TTS 的 RTF 有多个历史值，必须带 SEQLEN 标注**：1.900 / 1.818 对应 **SEQLEN=192**（当前交付配置）；知识库与部署规范中出现过的 **2.51 / 2.85** 对应早期 **SEQLEN=128**，不是同一配置的测量，不可并列比较。
 - **Qwen3-TTS 已知异常**：W4F16 的 `en_03`、`zh_03` 两条有明确音质问题（人工试听确认），保留为已知限制。W4F16 是当前体积/速度/质量的最佳候选，**W8BF16 作为保守回退**。

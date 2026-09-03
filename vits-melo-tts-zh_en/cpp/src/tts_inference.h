@@ -8,8 +8,8 @@
 
 namespace vits_tts {
 
-static const int  L_MAX        = 128;   // max padded sequence length
-static const int  T_MEL_FIXED  = 512;   // bmodel fixed T_mel dimension (~5.9s @ 44100Hz)
+static const int  L_MAX        = 256;   // max padded sequence length
+static const int  T_MEL_FIXED  = 1024;   // bmodel fixed T_mel dimension (~11.9s @ 44100Hz)
 static const int  Z_DIM        = 192;   // z_p channels
 static const int  UPSAMPLE     = 512;   // samples per mel frame
 static const int  SAMPLE_RATE  = 44100;

@@ -13,7 +13,7 @@
 | `0_Toolkits/soc-sdk-sp4` | Sophon SOC SDK（头文件 + 库） |
 | `0_Toolkits/tpu_mlir*.whl` | TPU-MLIR Python 包 |
 
-- onnx 处理（make_tpu_model / make_split_models / test_onnx）：独立 conda 环境；从仓库根目录执行 `conda create -n sophon-vits-melo-tts-zh-en python=3.10 -y`、`conda run -n sophon-vits-melo-tts-zh-en python -m pip install --upgrade pip`、`conda run -n sophon-vits-melo-tts-zh-en python -m pip install -r vits-melo-tts-zh_en/requirements.txt`；公共 TPU-MLIR 容器负责 bmodel 编译。
+- ONNX 导出/处理使用独立 conda 环境；从仓库根目录执行 `conda create -n sophon-vits-melo-tts-zh-en python=3.10 -y`、`conda run -n sophon-vits-melo-tts-zh-en python -m pip install -r vits-melo-tts-zh_en/requirements.txt`。需要重新导出时，另准备 MeloTTS 源码目录并通过 `PYTHONPATH` 指定；公共 TPU-MLIR 容器负责 bmodel 编译。
 
 所有命令从**仓库根目录** `Sophon_model_zoo/` 执行。
 
@@ -26,16 +26,21 @@ python/
 ├── make_tpu_model.py    # Step 1: 生成 model_tpu.onnx（去除 TPU 不支持的算子）
 ├── make_split_models.py # Step 2: 拆分出 part_a_encoder.onnx + part_c1_flow.onnx + part_c2_decoder.onnx
 ├── gen_bmodel.sh        # Step 3: 编译 bmodel（在 TPU-MLIR Docker 内执行）
-├── export_onnx.py       # 来源说明：原始 ONNX 来自上游 sherpa-onnx/MeloTTS，见下节
+├── export_onnx.py       # 使用 MeloTTS 权重导出中英混合单体 model.onnx（L 动态，仅作上游输入）
 ```
 
-> **原始 `model.onnx` 来源**：本方案**不**在本仓库内做 PyTorch→ONNX 导出。
-> `models/onnx/vits-melo-tts-zh_en/` 下的 onnx 由上游 **sherpa-onnx 对
-> [myshell-ai/MeloTTS](https://github.com/myshell-ai/MeloTTS) 的导出**（单女声 zh_en 模型，
-> 见该目录 `README.md` / `LICENSE`）。当前目录中保留的是 **Step 2 拆分后的最终产物**
-> （`part_a_encoder.onnx` + `part_c1_flow.onnx` + `part_c2_decoder.onnx`）；`model.onnx` 单体
-> 与 `model_tpu.onnx` 中间产物未保留。如需完整复现，先从上游导出单体 ONNX 放入
-> `models/onnx/vits-melo-tts-zh_en/model.onnx`，再按 Step 1→2→3 执行。
+> **原始 `model.onnx` 来源**：`export_onnx.py` 使用上游 MeloTTS 的中英混合模型结构导出单体 ONNX。推荐先从 ModelScope 下载 `myshell-ai/MeloTTS-Chinese` 的 `checkpoint.pth` 与 `config.json`，再准备与导出脚本兼容的 MeloTTS 源码：
+>
+> ```bash
+> conda run -n sophon-vits-melo-tts-zh-en python -m pip install modelscope==1.37.1 -i https://pypi.tuna.tsinghua.edu.cn/simple
+> conda run -n sophon-vits-melo-tts-zh-en python -c "from modelscope import snapshot_download; snapshot_download('myshell-ai/MeloTTS-Chinese', local_dir='/tmp/melotts_chinese')"
+> git clone --depth 1 https://github.com/myshell-ai/MeloTTS.git /tmp/MeloTTS
+> git -C /tmp/MeloTTS checkout 209145371cff8fc3bd60d7be902ea69cbdb7965a
+> conda run -n sophon-vits-melo-tts-zh-en python -m pip install -r /tmp/MeloTTS/requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+> conda run -n sophon-vits-melo-tts-zh-en env PYTHONPATH=/tmp/MeloTTS MELOTTS_CHECKPOINT=/tmp/melotts_chinese/checkpoint.pth MELOTTS_CONFIG=/tmp/melotts_chinese/config.json python vits-melo-tts-zh_en/python/export_onnx.py
+> ```
+>
+> 导出脚本会生成中英混合词典、`tokens.txt` 和 `model.onnx`；随后按 Step 1→2→3 执行。`model.onnx`、`model_tpu.onnx` 和中间文件不属于最终交付目录。
 
 ---
 
@@ -93,12 +98,12 @@ docker exec sophon-tpumlir-v128 bash /workspace/vits-melo-tts-zh_en/python/gen_b
 - RandomNormalLike 分支绕过（noise_scale=0 时贡献为零）
 - MAS 保留在 CPU（仅约 8ms）
 
-最终推理链路：**Part A（TPU 6ms）→ MAS（CPU 8ms）→ Part C（TPU 305ms）= RTF 0.12**
+最终推理链路：**Part A（TPU 3.9ms）→ MAS（CPU 127.5ms，256 token）→ Part C（TPU 169.3ms，T_mel=1024）**；256 token 中英混合样本总耗时 309.9ms，RTF 0.0267
 
 ---
 
 ## 注意事项
 
-- bmodel 的 T_mel 固定为 512（最多生成约 6s 音频），推理时 z_p 会 pad 到 512，输出截取实际有效帧
+- bmodel 的 `L=256`、`T_mel=1024` 均为固定形状（最多约 11.9s 音频）；推理时 z_p 会 pad 到 1024，超过上限的有效帧会被 C++ 截断并打印警告
 - BM1684X SDK 无 `BM_INT64`，Part A 的 token/tone 输入需在 C++ 侧 cast 为 int32 再上传
-- `matmul_ht` 中操作 Part A 输出的 h 时，行步长必须用 `L_MAX=128`，而非 `seq_len`（详见知识库）
+- `matmul_ht` 中操作 Part A 输出的 h 时，行步长必须用 `L_MAX=256`，而非 `seq_len`（详见知识库）

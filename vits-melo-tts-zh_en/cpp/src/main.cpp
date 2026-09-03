@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <climits>
 
 #include "tts_inference.h"
 #include "wav_writer.h"
@@ -15,16 +16,27 @@ static std::vector<int64_t> read_int64_bin(const char* path, int expected_len) {
         return {};
     }
     f.seekg(0, std::ios::end);
-    size_t file_size = (size_t)f.tellg();
+    std::streamoff file_size = f.tellg();
+    if (file_size < 0 || file_size % static_cast<std::streamoff>(sizeof(int64_t)) != 0) {
+        std::cerr << "[Error] Invalid int64 binary size: " << path << "\n";
+        return {};
+    }
     f.seekg(0, std::ios::beg);
 
-    int n = (int)(file_size / sizeof(int64_t));
-    if (n != expected_len) {
+    size_t n = static_cast<size_t>(file_size / sizeof(int64_t));
+    if (n > static_cast<size_t>(INT_MAX)) {
+        std::cerr << "[Error] Input is too large: " << path << "\n";
+        return {};
+    }
+    if (static_cast<int>(n) != expected_len) {
         std::cerr << "[Warn] " << path << ": expected " << expected_len
                   << " int64s, got " << n << "\n";
     }
     std::vector<int64_t> data(n);
-    f.read((char*)data.data(), file_size);
+    if (!f.read(reinterpret_cast<char*>(data.data()), file_size)) {
+        std::cerr << "[Error] Failed to read: " << path << "\n";
+        return {};
+    }
     return data;
 }
 
@@ -34,7 +46,7 @@ int main(int argc, char* argv[]) {
                   << " <tokens.bin> <tones.bin> <seq_len> <model_dir> <output.wav> [F32|F16]\n";
         std::cerr << "  tokens.bin : raw int64 binary (with blank, no padding)\n";
         std::cerr << "  tones.bin  : raw int64 binary (same length)\n";
-        std::cerr << "  seq_len    : actual sequence length\n";
+        std::cerr << "  seq_len    : actual sequence length, up to " << vits_tts::L_MAX << "\n";
         std::cerr << "  model_dir  : dir with model_part1.onnx + bmodel\n";
         std::cerr << "  output.wav : output 16-bit PCM WAV @ 44100Hz\n";
         std::cerr << "  precision  : F32 (default) or F16\n";
@@ -88,9 +100,10 @@ int main(int argc, char* argv[]) {
         std::cerr << "[Error] Inference returned 0 samples\n";
         return 1;
     }
-
-    // Write WAV
-    write_wav(output_wav, result.audio.data(), result.n_samples, vits_tts::SAMPLE_RATE);
+    if (!write_wav(output_wav, result.audio.data(), result.n_samples, vits_tts::SAMPLE_RATE)) {
+        std::cerr << "[Error] Failed to write WAV: " << output_wav << "\n";
+        return 1;
+    }
 
     std::cout << "\n=== DONE ===\n";
     std::cout << "Output WAV : " << output_wav << "\n";
