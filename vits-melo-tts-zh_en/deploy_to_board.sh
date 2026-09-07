@@ -2,15 +2,19 @@
 set -euo pipefail
 
 usage() {
-    printf '用法: BOARD_IP=<ip> [BOARD_USER=root] [BOARD_PORT=22] [BOARD_DIR=/data/vits_melo_tts] %s [F16|F32] [--test]\n' "$0"
+    printf '用法: BOARD_IP=<ip> [BOARD_USER=root] [BOARD_PORT=22] [BOARD_DIR=/data/vits_melo_tts] %s [F16|F32] [--test|--test-stream|--test-window]\n' "$0"
 }
 
 PREC=F16
 RUN_TEST=0
+RUN_STREAM_TEST=0
+RUN_WINDOW_TEST=0
 for arg in "$@"; do
     case "$arg" in
         F16|F32) PREC="$arg" ;;
         --test) RUN_TEST=1 ;;
+        --test-stream) RUN_STREAM_TEST=1 ;;
+        --test-window) RUN_WINDOW_TEST=1 ;;
         *) usage >&2; exit 2 ;;
     esac
 done
@@ -23,6 +27,7 @@ BOARD_DIR="${BOARD_DIR:-/data/vits_melo_tts}"
 MODEL_DIR="${MODEL_DIR:-${SCRIPT_DIR}/models/BM1684X}"
 BINARY="${BINARY:-${SCRIPT_DIR}/cpp/build/vits_melo_tts_bm1684}"
 TEST_DIR="${TEST_DIR:-${SCRIPT_DIR}/test_data}"
+STREAM_MANIFEST="${STREAM_MANIFEST:-${TEST_DIR}/stream_manifest.txt}"
 REMOTE="${BOARD_USER}@${BOARD_IP}"
 
 if [[ -n "${BOARD_PASS:-}" ]]; then
@@ -43,6 +48,7 @@ BMODELS=(
     "${MODEL_DIR}/vits_part_c1_${PREC}.bmodel"
     "${MODEL_DIR}/vits_part_c2_${PREC}.bmodel"
 )
+STREAM_BMODEL="${MODEL_DIR}/vits_part_c2_stream_W128_R16_${PREC}.bmodel"
 TEST_FILES=(
     test_zh_tokens.bin
     test_zh_tones.bin
@@ -52,15 +58,23 @@ TEST_FILES=(
 
 require_file "$BINARY"
 for file in "${BMODELS[@]}"; do require_file "$file"; done
-if [[ "$RUN_TEST" -eq 1 ]]; then
+if [[ "$RUN_TEST" -eq 1 || "$RUN_STREAM_TEST" -eq 1 || "$RUN_WINDOW_TEST" -eq 1 ]]; then
     for file in "${TEST_FILES[@]}"; do require_file "${TEST_DIR}/${file}"; done
 fi
+if [[ "$RUN_STREAM_TEST" -eq 1 || "$RUN_WINDOW_TEST" -eq 1 ]]; then require_file "$STREAM_MANIFEST"; fi
+if [[ "$RUN_WINDOW_TEST" -eq 1 ]]; then require_file "$STREAM_BMODEL"; fi
 
 "${SSH[@]}" "$REMOTE" "mkdir -p '${BOARD_DIR}/models' '${BOARD_DIR}/test_data'"
 "${SCP[@]}" "$BINARY" "${REMOTE}:${BOARD_DIR}/"
 "${SCP[@]}" "${BMODELS[@]}" "${REMOTE}:${BOARD_DIR}/models/"
-if [[ "$RUN_TEST" -eq 1 ]]; then
+if [[ "$RUN_WINDOW_TEST" -eq 1 ]]; then
+    "${SCP[@]}" "$STREAM_BMODEL" "${REMOTE}:${BOARD_DIR}/models/"
+fi
+if [[ "$RUN_TEST" -eq 1 || "$RUN_STREAM_TEST" -eq 1 || "$RUN_WINDOW_TEST" -eq 1 ]]; then
     "${SCP[@]}" "${TEST_FILES[@]/#/${TEST_DIR}/}" "${REMOTE}:${BOARD_DIR}/test_data/"
+fi
+if [[ "$RUN_STREAM_TEST" -eq 1 || "$RUN_WINDOW_TEST" -eq 1 ]]; then
+    "${SCP[@]}" "$STREAM_MANIFEST" "${REMOTE}:${BOARD_DIR}/test_data/stream_manifest.txt"
 fi
 
 check_md5() {
@@ -80,15 +94,27 @@ check_md5 "$BINARY" "${BOARD_DIR}/$(basename "$BINARY")"
 for file in "${BMODELS[@]}"; do
     check_md5 "$file" "${BOARD_DIR}/models/$(basename "$file")"
 done
-if [[ "$RUN_TEST" -eq 1 ]]; then
+if [[ "$RUN_WINDOW_TEST" -eq 1 ]]; then
+    check_md5 "$STREAM_BMODEL" "${BOARD_DIR}/models/$(basename "$STREAM_BMODEL")"
+fi
+if [[ "$RUN_TEST" -eq 1 || "$RUN_STREAM_TEST" -eq 1 || "$RUN_WINDOW_TEST" -eq 1 ]]; then
     for file in "${TEST_FILES[@]}"; do
         check_md5 "${TEST_DIR}/${file}" "${BOARD_DIR}/test_data/${file}"
     done
+fi
+if [[ "$RUN_STREAM_TEST" -eq 1 || "$RUN_WINDOW_TEST" -eq 1 ]]; then
+    check_md5 "$STREAM_MANIFEST" "${BOARD_DIR}/test_data/stream_manifest.txt"
 fi
 
 if [[ "$RUN_TEST" -eq 1 ]]; then
     "${SSH[@]}" "$REMOTE" "cd '${BOARD_DIR}' && chmod +x './$(basename "$BINARY")' && ./$(basename "$BINARY") test_data/test_zh_tokens.bin test_data/test_zh_tones.bin 61 models output_zh_${PREC}.wav '${PREC}'"
     "${SSH[@]}" "$REMOTE" "cd '${BOARD_DIR}' && ./$(basename "$BINARY") test_data/test_en_zh_tokens.bin test_data/test_en_zh_tones.bin 53 models output_en_zh_${PREC}.wav '${PREC}'"
+fi
+if [[ "$RUN_STREAM_TEST" -eq 1 ]]; then
+    "${SSH[@]}" "$REMOTE" "cd '${BOARD_DIR}' && ./$(basename "$BINARY") --stream-manifest test_data/stream_manifest.txt --model-dir models --wav-out stream_smoke_${PREC}.wav --precision '${PREC}'"
+fi
+if [[ "$RUN_WINDOW_TEST" -eq 1 ]]; then
+    "${SSH[@]}" "$REMOTE" "cd '${BOARD_DIR}' && ./$(basename "$BINARY") --stream-manifest test_data/stream_manifest.txt --model-dir models --wav-out window_smoke_${PREC}.wav --precision '${PREC}' --window-stream"
 fi
 
 printf '部署完成: %s（精度=%s）\n' "${REMOTE}:${BOARD_DIR}" "$PREC"

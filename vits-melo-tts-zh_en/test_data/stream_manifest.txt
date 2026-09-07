@@ -1,0 +1,3 @@
+# tokens.bin tones.bin seq_len label
+test_zh_tokens.bin test_zh_tones.bin 61 zh
+test_en_zh_tokens.bin test_en_zh_tones.bin 53 en

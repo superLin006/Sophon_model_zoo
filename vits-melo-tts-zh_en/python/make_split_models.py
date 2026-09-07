@@ -45,6 +45,33 @@ OUT_C2   = os.path.join(PROJ, 'models/onnx/vits-melo-tts-zh_en/part_c2_decoder.o
 
 L_FIXED     = 256
 T_MEL_FIXED = 1024
+STREAM_WINDOW = 128
+STREAM_OVERLAP = 32
+STREAM_CONTEXT = 16
+STREAM_INPUT = STREAM_WINDOW + 2 * STREAM_CONTEXT
+
+
+def set_static_shape(value_info, shape):
+    value_info.type.tensor_type.shape.ClearField('dim')
+    for value in shape:
+        value_info.type.tensor_type.shape.dim.add(dim_value=value)
+
+
+def make_c2_stream_model():
+    path = os.path.join(
+        os.path.dirname(OUT_C2),
+        f'part_c2_decoder_stream_W{STREAM_WINDOW}_R{STREAM_CONTEXT}.onnx',
+    )
+    model = onnx.load(OUT_C2)
+    set_static_shape(model.graph.input[0], [1, 192, STREAM_INPUT])
+    set_static_shape(model.graph.output[0], [1, 1, STREAM_INPUT * 512])
+    model.graph.ClearField('value_info')
+    model = shape_inference.infer_shapes(model, check_type=False, strict_mode=False)
+    onnx.save(model, path)
+    print(f'  C2 stream model: input=[1,192,{STREAM_INPUT}] '
+          f'output=[1,1,{STREAM_INPUT * 512}]')
+    return path
+
 
 
 def extract_subgraph(model, input_shapes, output_shapes, output_names, path, input_types=None):
@@ -189,6 +216,8 @@ def main():
         mc2 = mc2_sim
     onnx.save(mc2, OUT_C2)
 
+    stream_c2 = make_c2_stream_model()
+
     # ── ORT 冒烟 ───────────────────────────────────────
     zp = np.random.randn(1, 192, T_MEL_FIXED).astype(np.float32)
     mask = np.ones((1, 1, T_MEL_FIXED), dtype=np.float32)
@@ -196,7 +225,12 @@ def main():
         None, {'/Transpose_3_output_0': zp, '/Cast_2_output_0': mask})[0]
     out_c2 = ort.InferenceSession(OUT_C2).run(
         None, {'/Mul_10_output_0': out_c1})[0]
+    stream_input = np.random.randn(1, 192, STREAM_INPUT).astype(np.float32)
+    stream_out = ort.InferenceSession(stream_c2).run(
+        None, {'/Mul_10_output_0': stream_input})[0]
+    assert stream_out.shape == (1, 1, STREAM_INPUT * 512)
     print(f'  C1 output: {out_c1.shape}; C2 output: {out_c2.shape}')
+    print(f'  C2 stream output: {stream_out.shape}')
 
     ops = {}
     for path in (OUT_C1, OUT_C2):

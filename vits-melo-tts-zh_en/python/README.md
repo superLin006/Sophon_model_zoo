@@ -24,7 +24,7 @@
 ```
 python/
 ├── make_tpu_model.py    # Step 1: 生成 model_tpu.onnx（去除 TPU 不支持的算子）
-├── make_split_models.py # Step 2: 拆分出 part_a_encoder.onnx + part_c1_flow.onnx + part_c2_decoder.onnx
+├── make_split_models.py # Step 2: 拆分 Part A/C1/C2，并生成 C2 window 子图
 ├── gen_bmodel.sh        # Step 3: 编译 bmodel（在 TPU-MLIR Docker 内执行）
 ├── export_onnx.py       # 使用 MeloTTS 权重导出中英混合单体 model.onnx（L 动态，仅作上游输入）
 ```
@@ -70,18 +70,20 @@ conda run -n sophon-vits-melo-tts-zh-en --no-capture-output python vits-melo-tts
 输出：
 - `vits-melo-tts-zh_en/models/onnx/vits-melo-tts-zh_en/part_a_encoder.onnx`
 - `vits-melo-tts-zh_en/models/onnx/vits-melo-tts-zh_en/part_c1_flow.onnx`
-- `vits-melo-tts-zh_en/models/onnx/vits-melo-tts-zh_en/part_c2_decoder.onnx`
+- `vits-melo-tts-zh_en/models/onnx/vits-melo-tts-zh_en/part_c2_decoder_stream_W128_R16.onnx`
 
 ### Step 3：编译 bmodel
 
 ```bash
-docker exec sophon-tpumlir-v128 bash /workspace/vits-melo-tts-zh_en/python/gen_bmodel.sh F16
+# 仅编译 C2 window bmodel（复用已有 Part A/C1）
+docker exec sophon-tpumlir-v128 bash /workspace/vits-melo-tts-zh_en/python/gen_bmodel.sh F16 --stream
 ```
 
 输出：
 - `vits-melo-tts-zh_en/models/BM1684X/vits_part_a_F16.bmodel`
 - `vits-melo-tts-zh_en/models/BM1684X/vits_part_c1_F16.bmodel`
 - `vits-melo-tts-zh_en/models/BM1684X/vits_part_c2_F16.bmodel`
+- `vits-melo-tts-zh_en/models/BM1684X/vits_part_c2_stream_W128_R16_F16.bmodel`（执行 `--stream` 生成）
 
 ---
 
@@ -107,3 +109,5 @@ docker exec sophon-tpumlir-v128 bash /workspace/vits-melo-tts-zh_en/python/gen_b
 - bmodel 的 `L=256`、`T_mel=1024` 均为固定形状（最多约 11.9s 音频）；推理时 z_p 会 pad 到 1024，超过上限的有效帧会被 C++ 截断并打印警告
 - BM1684X SDK 无 `BM_INT64`，Part A 的 token/tone 输入需在 C++ 侧 cast 为 int32 再上传
 - `matmul_ht` 中操作 Part A 输出的 h 时，行步长必须用 `L_MAX=256`，而非 `seq_len`（详见知识库）
+- C2 window 模型输入为 `[1,192,160]`，其中每个窗口交付中间 128 个 mel 帧，左右 16 帧作为上下文；C++ 运行时以 32 帧 overlap-add 交付连续 PCM。C1 含全局注意力，仍按完整 mel 序列运行。
+- C2 window 模型通过显式 `gen_bmodel.sh F16 --stream` 生成，旧 `gen_bmodel.sh F16` 和旧三件 bmodel 不会被覆盖。

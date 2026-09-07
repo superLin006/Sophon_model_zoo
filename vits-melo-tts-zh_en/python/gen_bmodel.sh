@@ -49,6 +49,34 @@ fi
 
 mkdir -p "${BMODEL_DIR}" "${WORK_DIR}"
 
+if [ "${2:-}" = "--stream" ]; then
+    STREAM_ONNX="${ONNX_DIR}/part_c2_decoder_stream_W128_R16.onnx"
+    STREAM_WORK="${MODEL_ROOT}/compile/tmp/vits_stream_W128_R16_${QUANTIZE}"
+    STREAM_MODEL="${STREAM_WORK}/vits_part_c2_stream_W128_R16_${QUANTIZE}.bmodel"
+    STREAM_FINAL="${BMODEL_DIR}/vits_part_c2_stream_W128_R16_${QUANTIZE}.bmodel"
+    STREAM_INPUT=160
+    if [ ! -f "${STREAM_ONNX}" ]; then
+        echo "[Error] 缺少 C2 stream ONNX：${STREAM_ONNX}"
+        exit 1
+    fi
+    mkdir -p "${STREAM_WORK}"
+    cd "${STREAM_WORK}"
+    echo "[C2 stream] 编译 window ONNX：输入 mel=${STREAM_INPUT}"
+    model_transform.py \
+        --model_name vits_part_c2_stream_W128_R16 \
+        --model_def "${STREAM_ONNX}" \
+        --input_shapes "[[1,${Z_DIM},${STREAM_INPUT}]]" \
+        --mlir vits_part_c2_stream_W128_R16.mlir
+    model_deploy.py \
+        --mlir vits_part_c2_stream_W128_R16.mlir \
+        --quantize ${QUANTIZE} \
+        --chip ${CHIP} \
+        --model "${STREAM_MODEL}"
+    cp "${STREAM_MODEL}" "${STREAM_FINAL}"
+    echo "[C2 stream] 完成：$(ls -lh "${STREAM_FINAL}" | awk '{print $5, $9}')"
+    exit 0
+fi
+
 echo "================================================================"
 echo "  VITS-MeloTTS BM1684X bmodel 编译  [${QUANTIZE}]  T_MEL=${T_MEL_FIXED}"
 echo "================================================================"
