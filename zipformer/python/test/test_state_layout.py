@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parents[1]))
+sys.path.insert(0, str(Path(__file__).parents[2]))
 from state_layout import build_manifest, load_manifest, state_specs, validate_manifest
 
 
@@ -34,7 +34,7 @@ class StateLayoutTest(unittest.TestCase):
             self.assertEqual(load_manifest(path), manifest)
 
     def test_checked_in_manifest_is_generated_manifest(self):
-        path = Path(__file__).parents[1] / "configs" / "tensor_manifest.json"
+        path = Path(__file__).parents[2] / "configs" / "tensor_manifest.json"
         checked = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(checked, build_manifest())
 
